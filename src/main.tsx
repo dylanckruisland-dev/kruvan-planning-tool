@@ -14,7 +14,12 @@ import { LoginPage } from "@/pages/LoginPage";
 import { AppRouter } from "@/router";
 import "./index.css";
 
-const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
+/** Public Convex prod URL (same project as `npx convex deploy`). Used when `VITE_CONVEX_URL` is missing at build time — Netlify UI can override `netlify.toml` with an empty value. */
+const CONVEX_PROD_FALLBACK = "https://decisive-bulldog-581.convex.cloud";
+
+const fromEnv = (import.meta.env.VITE_CONVEX_URL as string | undefined)?.trim();
+const convexUrl =
+  fromEnv || (import.meta.env.PROD ? CONVEX_PROD_FALLBACK : undefined);
 const convexClient = convexUrl ? new ConvexReactClient(convexUrl) : null;
 
 createRoot(document.getElementById("root")!).render(
