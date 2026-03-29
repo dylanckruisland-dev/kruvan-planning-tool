@@ -1,0 +1,185 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
+  --radius-shell: 1rem;
+  --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px rgb(15 23 42 / 0.06);
+  /* Secondary body / helper text — prefer over slate-500 for contrast */
+  --text-muted: #475569;
+}
+
+/* Workspace accent (overridden in JS from Settings → workspace accent) */
+:root {
+  --workspace-accent: #4f46e5;
+  --workspace-accent-rgb: 79, 70, 229;
+  /* Kruvan logo — fixed purple/violet for login & brand (separate from workspace accent) */
+  --kruvan-brand: #6d28d9;
+  --kruvan-brand-hover: #5b21b6;
+  --kruvan-brand-rgb: 109, 40, 217;
+}
+
+@layer utilities {
+  .text-accent {
+    color: var(--workspace-accent);
+  }
+  .hover\:text-accent-strong:hover {
+    color: color-mix(in srgb, var(--workspace-accent) 38%, #0f172a);
+  }
+
+  .bg-accent-soft {
+    background-color: rgba(var(--workspace-accent-rgb), 0.1);
+  }
+  .bg-accent-soft-mid {
+    background-color: rgba(var(--workspace-accent-rgb), 0.14);
+  }
+  .bg-accent-soft-bold {
+    background-color: rgba(var(--workspace-accent-rgb), 0.19);
+  }
+  .bg-accent-tint {
+    background-color: rgba(var(--workspace-accent-rgb), 0.06);
+  }
+  /* Tailwind does not auto-generate hover: for custom @layer utilities — explicit rule */
+  .hover\:bg-accent-tint:hover {
+    background-color: rgba(var(--workspace-accent-rgb), 0.12);
+  }
+
+  .text-accent-ink {
+    color: color-mix(in srgb, var(--workspace-accent) 6%, #020617);
+  }
+  .text-accent-ink-muted {
+    color: color-mix(in srgb, var(--workspace-accent) 28%, #475569);
+  }
+  .text-accent-icon-muted {
+    color: color-mix(in srgb, var(--workspace-accent) 48%, #94a3b8);
+  }
+
+  .border-accent-soft {
+    border-color: rgba(var(--workspace-accent-rgb), 0.18);
+  }
+  .border-accent-border {
+    border-color: rgba(var(--workspace-accent-rgb), 0.22);
+  }
+
+  .bg-accent-solid {
+    background-color: var(--workspace-accent);
+  }
+  .hover\:bg-accent-solid-hover:hover {
+    background-color: color-mix(in srgb, var(--workspace-accent) 86%, black);
+  }
+
+  .bg-accent-gradient {
+    background-image: linear-gradient(
+      to bottom right,
+      var(--workspace-accent),
+      color-mix(in srgb, var(--workspace-accent) 68%, #1e1b4b)
+    );
+  }
+  .shadow-accent-glow {
+    box-shadow: 0 4px 14px -3px rgba(var(--workspace-accent-rgb), 0.38);
+  }
+
+  .ring-accent-focus {
+    --tw-ring-color: rgba(var(--workspace-accent-rgb), 0.35);
+  }
+  .ring-accent-outline {
+    --tw-ring-color: rgba(var(--workspace-accent-rgb), 0.26);
+  }
+  .ring-accent-soft-ring {
+    --tw-ring-color: rgba(var(--workspace-accent-rgb), 0.18);
+  }
+  .ring-accent-dnd {
+    --tw-ring-color: rgba(var(--workspace-accent-rgb), 0.32);
+  }
+  .ring-accent-dnd-strong {
+    --tw-ring-color: rgba(var(--workspace-accent-rgb), 0.42);
+  }
+
+  .shadow-accent-now-bar {
+    box-shadow:
+      0 0 0 2px rgba(255, 255, 255, 0.95),
+      0 0 12px 3px rgba(var(--workspace-accent-rgb), 0.42),
+      0 0 24px 4px rgba(var(--workspace-accent-rgb), 0.22);
+  }
+
+  .chip-accent-subtasks {
+    background-color: rgba(var(--workspace-accent-rgb), 0.12);
+    color: color-mix(in srgb, var(--workspace-accent) 22%, #1e1b4b);
+    --tw-ring-color: rgba(var(--workspace-accent-rgb), 0.22);
+  }
+}
+
+@layer components {
+  /* Login: card enters calmly (respects prefers-reduced-motion) */
+  @keyframes login-card-enter {
+    from {
+      opacity: 0;
+      transform: translateY(1.25rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .login-card-enter {
+    animation: login-card-enter 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .login-card-enter {
+      animation: none;
+    }
+  }
+
+  @keyframes page-shell-enter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .page-shell-enter {
+    animation: page-shell-enter 0.28s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .page-shell-enter {
+      animation: none;
+    }
+  }
+
+  .input-focus-accent:focus,
+  .input-focus-accent:focus-visible {
+    border-color: rgba(var(--workspace-accent-rgb), 0.42);
+    --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width)
+      var(--tw-ring-offset-color);
+    --tw-ring-shadow: var(--tw-ring-inset) 0 0 0
+      calc(2px + var(--tw-ring-offset-width))
+      rgba(var(--workspace-accent-rgb), 0.14);
+    box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+  }
+
+  .focus-within-accent:focus-within {
+    border-color: rgba(var(--workspace-accent-rgb), 0.42);
+    --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width)
+      var(--tw-ring-offset-color);
+    --tw-ring-shadow: var(--tw-ring-inset) 0 0 0
+      calc(2px + var(--tw-ring-offset-width))
+      rgba(var(--workspace-accent-rgb), 0.14);
+    box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+  }
+}
+
+@layer base {
+  html {
+    @apply h-full antialiased;
+  }
+  /* Lock document scroll: app shell (Sidebar + main) owns vertical scrolling. */
+  body {
+    @apply h-full overflow-hidden bg-[#f6f7f9] text-slate-900;
+  }
+  #root {
+    @apply h-full min-h-0;
+  }
+}
