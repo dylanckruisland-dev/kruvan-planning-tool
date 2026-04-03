@@ -24,7 +24,9 @@ import {
 } from "@/components/calendar/agenda-dnd-ids";
 import { EventFormModal } from "@/components/calendar/EventFormModal";
 import { useWorkspaceDisplay } from "@/hooks/useWorkspaceDisplay";
+import { useTabTitle } from "@/hooks/useTabTitle";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { tasksPageSearch } from "@/lib/router-search-defaults";
 import {
   addDays,
   addMonths,
@@ -34,7 +36,8 @@ import {
   weekStartAnchor,
 } from "@/lib/dates";
 import { cn } from "@/lib/cn";
-import { Calendar, CheckCircle2, Plus } from "lucide-react";
+import { taskDueDateTextClass } from "@/lib/due-urgency";
+import { Calendar, CheckCircle2, Plus, RefreshCw } from "lucide-react";
 import type { Id } from "@cvx/_generated/dataModel";
 
 type ViewMode = "day" | "week" | "month";
@@ -69,6 +72,7 @@ export function AgendaPage() {
 
   const updateEventMutation = useMutation(api.events.update);
   const updateTaskMutation = useMutation(api.tasks.update);
+  const triggerIcsSync = useMutation(api.icsCalendar.triggerSync);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -87,8 +91,10 @@ export function AgendaPage() {
     if (!workspace) return;
     const d = workspace.defaultAgendaView;
     if (d !== "day" && d !== "week") return;
-    setMode((prev) => (prev === "month" ? prev : d));
-  }, [workspace?._id, workspace?.defaultAgendaView]);
+    queueMicrotask(() => {
+      setMode((prev) => (prev === "month" ? prev : d));
+    });
+  }, [workspace]);
 
   const end = useMemo(() => {
     if (mode === "day") return start + 86400000;
@@ -98,6 +104,11 @@ export function AgendaPage() {
 
   const events = useQuery(
     api.events.listInRange,
+    workspaceId ? { workspaceId, start, end } : "skip",
+  );
+
+  const icsEvents = useQuery(
+    api.icsCalendar.listInRange,
     workspaceId ? { workspaceId, start, end } : "skip",
   );
 
@@ -112,23 +123,45 @@ export function AgendaPage() {
       id: String(t._id),
       title: t.title,
       dueDate: t.dueDate!,
+      status: t.status,
     }));
   }, [dueTasksRaw]);
 
   const blocks = useMemo(() => {
-    return (events ?? []).map((e) => ({
+    const native = (events ?? []).map((e) => ({
       id: String(e._id),
       title: e.title,
       start: e.startTime,
       end: e.endTime,
       meta: e.description,
     }));
-  }, [events]);
+    const external = (icsEvents ?? []).map((e) => ({
+      id: `ics:${String(e._id)}`,
+      title: e.title,
+      start: e.startTime,
+      end: e.endTime,
+      meta: e.description,
+      readOnly: true as const,
+    }));
+    return [...native, ...external].sort((a, b) => a.start - b.start);
+  }, [events, icsEvents]);
 
   const upcoming = useQuery(
     api.events.listUpcoming,
     workspaceId ? { workspaceId, from: upcomingFrom, limit: 80 } : "skip",
   );
+
+  const icsUpcoming = useQuery(
+    api.icsCalendar.listUpcoming,
+    workspaceId ? { workspaceId, from: upcomingFrom, limit: 80 } : "skip",
+  );
+
+  const icsSubscriptions = useQuery(
+    api.icsCalendar.listSubscriptions,
+    workspaceId ? { workspaceId } : "skip",
+  );
+
+  const [icsSyncBusy, setIcsSyncBusy] = useState(false);
 
   const workspaceTasks = useQuery(
     api.tasks.listByWorkspace,
@@ -158,11 +191,47 @@ export function AgendaPage() {
       .sort((a, b) => (a.dueDate ?? 0) - (b.dueDate ?? 0));
   }, [workspaceTasks]);
 
+  const upcomingMerged = useMemo(() => {
+    const native = (upcoming ?? []).map((e) => ({
+      listId: String(e._id),
+      title: e.title,
+      startTime: e.startTime,
+      endTime: e.endTime,
+      allDay: e.allDay,
+      external: false as const,
+    }));
+    const ext = (icsUpcoming ?? []).map((e) => ({
+      listId: `ics:${String(e._id)}`,
+      title: e.title,
+      startTime: e.startTime,
+      endTime: e.endTime,
+      allDay: e.allDay,
+      external: true as const,
+    }));
+    return [...native, ...ext]
+      .sort((a, b) => a.startTime - b.startTime)
+      .slice(0, 80);
+  }, [upcoming, icsUpcoming]);
+
+  async function syncExternalCalendars() {
+    if (!icsSubscriptions?.length) return;
+    setIcsSyncBusy(true);
+    try {
+      await Promise.all(
+        icsSubscriptions.map((s) =>
+          triggerIcsSync({ subscriptionId: s._id }),
+        ),
+      );
+    } finally {
+      setIcsSyncBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (!eventFromUrl) return;
     const el = document.getElementById(`agenda-event-${eventFromUrl}`);
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [eventFromUrl, upcoming]);
+  }, [eventFromUrl, upcomingMerged]);
 
   function defaultNewEventRange(): { start: number; end: number } {
     const base = new Date(anchor);
@@ -196,6 +265,7 @@ export function AgendaPage() {
   }
 
   function openEditEvent(blockId: string) {
+    if (blockId.startsWith("ics:")) return;
     const e =
       events?.find((x) => String(x._id) === blockId) ??
       upcoming?.find((x) => String(x._id) === blockId);
@@ -249,7 +319,7 @@ export function AgendaPage() {
   function openDueTask(taskId: string) {
     navigate({
       to: "/tasks",
-      search: { task: taskId, taskView: undefined },
+      search: { ...tasksPageSearch, task: taskId, taskView: undefined },
     });
   }
 
@@ -345,8 +415,25 @@ export function AgendaPage() {
 
   const calendarLoading =
     events === undefined ||
+    icsEvents === undefined ||
+    icsUpcoming === undefined ||
     dueTasksRaw === undefined ||
     workspaceTasks === undefined;
+
+  const agendaTabTitle = useMemo(() => {
+    if (!eventFromUrl) return "Agenda";
+    const e = events?.find((x) => String(x._id) === eventFromUrl);
+    if (e?.title?.trim()) return e.title;
+    const u = upcoming?.find((x) => String(x._id) === eventFromUrl);
+    if (u?.title?.trim()) return u.title;
+    if (eventFromUrl.startsWith("ics:")) {
+      const id = eventFromUrl.slice("ics:".length);
+      const ext = icsUpcoming?.find((x) => String(x._id) === id);
+      if (ext?.title?.trim()) return ext.title;
+    }
+    return "Event";
+  }, [eventFromUrl, events, upcoming, icsUpcoming]);
+  useTabTitle(agendaTabTitle);
 
   return (
     <div className="space-y-6">
@@ -423,9 +510,32 @@ export function AgendaPage() {
                 Month
               </button>
             </div>
-            <p className="text-xs text-slate-500">
-              Anchor {formatShortDateWs(anchor.getTime())}
-            </p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+              <span>Anchor {formatShortDateWs(anchor.getTime())}</span>
+              {icsSubscriptions && icsSubscriptions.length > 0 ? (
+                <>
+                  <span className="text-slate-300" aria-hidden>
+                    ·
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void syncExternalCalendars()}
+                    disabled={icsSyncBusy}
+                    title="Refresh external calendar feeds"
+                    className="inline-flex items-center gap-1 rounded-md text-slate-400 transition hover:text-slate-600 disabled:opacity-50"
+                  >
+                    <RefreshCw
+                      className={cn(
+                        "h-3 w-3 shrink-0",
+                        icsSyncBusy && "animate-spin",
+                      )}
+                      aria-hidden
+                    />
+                    <span className="font-normal">Sync external</span>
+                  </button>
+                </>
+              ) : null}
+            </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             <button
@@ -519,27 +629,32 @@ export function AgendaPage() {
                   <Calendar className="h-4 w-4 text-slate-400" aria-hidden />
                 </div>
                 <ul className="space-y-3">
-                  {(upcoming ?? []).map((e) => (
-                    <li key={e._id} id={`agenda-event-${String(e._id)}`}>
+                  {upcomingMerged.map((row) => (
+                    <li key={row.listId} id={`agenda-event-${row.listId}`}>
                       <button
                         type="button"
-                        onClick={() => openEditEvent(String(e._id))}
+                        onClick={() => openEditEvent(row.listId)}
                         className={cn(
-                          "w-full rounded-xl border border-slate-200/80 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md",
-                          eventFromUrl === String(e._id) &&
+                          "w-full rounded-xl border p-4 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md",
+                          row.external
+                            ? "border-slate-200/70 bg-slate-50/60 cursor-default"
+                            : "border-slate-200/80 bg-white",
+                          eventFromUrl === row.listId &&
                             "ring-2 ring-accent-outline ring-offset-2",
                         )}
                       >
-                        <p className="font-semibold text-slate-900">{e.title}</p>
+                        <p className="font-semibold text-slate-900">
+                          {row.title}
+                        </p>
                         <p className="mt-1 text-xs text-slate-500">
-                          {e.allDay
-                            ? formatShortDateWs(e.startTime)
-                            : `${formatShortDateWs(e.startTime)} · ${formatTimeWs(e.startTime)} – ${formatTimeWs(e.endTime)}`}
+                          {row.allDay
+                            ? formatShortDateWs(row.startTime)
+                            : `${formatShortDateWs(row.startTime)} · ${formatTimeWs(row.startTime)} – ${formatTimeWs(row.endTime)}`}
                         </p>
                       </button>
                     </li>
                   ))}
-                  {(upcoming ?? []).length === 0 ? (
+                  {upcomingMerged.length === 0 ? (
                     <li className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-sm text-slate-500">
                       No upcoming events.
                     </li>
@@ -560,11 +675,20 @@ export function AgendaPage() {
                     <li key={t._id}>
                       <Link
                         to="/tasks"
-                        search={{ task: String(t._id), taskView: undefined }}
+                        search={{
+                          ...tasksPageSearch,
+                          task: String(t._id),
+                          taskView: undefined,
+                        }}
                         className="block rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md"
                       >
                         <p className="font-semibold text-slate-900">{t.title}</p>
-                        <p className="mt-1 text-xs text-slate-500">
+                        <p
+                          className={cn(
+                            "mt-1 text-xs",
+                            taskDueDateTextClass(t),
+                          )}
+                        >
                           Due {formatShortDateWs(t.dueDate!)}
                         </p>
                       </Link>

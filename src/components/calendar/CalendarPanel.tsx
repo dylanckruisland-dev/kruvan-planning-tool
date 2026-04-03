@@ -1,7 +1,7 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useState } from "react";
-import { ListTodo } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ListTodo, X } from "lucide-react";
 import {
   agendaDayStartMs,
   agendaEventDragId,
@@ -10,6 +10,8 @@ import {
   agendaTaskDragId,
   agendaTaskStripDropId,
 } from "@/components/calendar/agenda-dnd-ids";
+import { TASK_STATUS_LABEL, type TaskStatus } from "@/lib/task-status";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { cn } from "@/lib/cn";
 import {
   addDays,
@@ -19,13 +21,16 @@ import {
   startOfDay,
   weekStartAnchor,
 } from "@/lib/dates";
+import { taskDueDateTextClass } from "@/lib/due-urgency";
 
-type Block = {
+export type AgendaCalendarBlock = {
   id: string;
   title: string;
   start: number;
   end: number;
   meta?: string;
+  /** External ICS-backed events — not editable in Kruvan. */
+  readOnly?: boolean;
 };
 
 /** Task with a due date — shown in the top strip (no time), not in the grid. */
@@ -33,6 +38,7 @@ export type AgendaDueTask = {
   id: string;
   title: string;
   dueDate: number;
+  status?: TaskStatus;
 };
 
 const SLOT_COUNT = 48;
@@ -43,8 +49,20 @@ const SLOT_AREA_HEIGHT_REM = 84;
 const DAY_HEADER_CLASS =
   "flex h-14 shrink-0 flex-col items-center justify-center border-b border-slate-100 px-2 py-2 text-center";
 
-const TASK_STRIP_CLASS =
-  "max-h-28 min-h-[2.75rem] shrink-0 overflow-y-auto border-b border-slate-100 bg-slate-50/50 px-1 py-1.5";
+/** Fixed height so multiple due tasks never stretch the week grid (one chip + optional +N in one row). */
+const TASK_STRIP_HEIGHT_CLASS = "h-11";
+const TASK_STRIP_CLASS = cn(
+  "shrink-0 overflow-hidden border-b border-slate-100 bg-slate-50/50 px-1 py-1",
+  TASK_STRIP_HEIGHT_CLASS,
+);
+
+function sameCalendarDay(dueMs: number, day: Date): boolean {
+  const td = new Date(dueMs);
+  td.setHours(0, 0, 0, 0);
+  const dd = new Date(day);
+  dd.setHours(0, 0, 0, 0);
+  return td.getTime() === dd.getTime();
+}
 
 function slotIndexToClock(s: number): { hour: number; minute: number } {
   const startMin = s * 30;
@@ -60,6 +78,23 @@ function useNow() {
     const id = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(id);
   }, []);
+  useEffect(() => {
+    const msUntilMidnight =
+      new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 1,
+        0,
+        0,
+        0,
+        0,
+      ).getTime() - now.getTime();
+    const t = window.setTimeout(
+      () => setNow(new Date()),
+      Math.max(1, msUntilMidnight),
+    );
+    return () => window.clearTimeout(t);
+  }, [now]);
   return now;
 }
 
@@ -91,13 +126,66 @@ export function DraggableDueTaskChip({
         onDueTaskClick?.(task.id);
       }}
       className={cn(
-        "w-full touch-none truncate rounded-md border border-emerald-200/90 bg-emerald-50 px-1.5 py-1 text-left text-[10px] font-medium text-emerald-900 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100/90",
+        "w-full min-w-0 touch-none truncate rounded-md border border-emerald-200/90 bg-emerald-50 px-1.5 py-1 text-left text-[10px] font-medium text-emerald-900 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100/90",
         isDragging && "cursor-grabbing opacity-40",
         !isDragging && "cursor-grab",
         className,
       )}
     >
       {task.title}
+    </button>
+  );
+}
+
+function eventBlockLayout(block: AgendaCalendarBlock, d: Date) {
+  const day0 = agendaDayStartMs(d);
+  const startFrac = agendaLocalFractionInDay(block.start, day0);
+  let endFrac = agendaLocalFractionInDay(block.end, day0);
+  if (endFrac < startFrac) endFrac = startFrac;
+  const heightFrac = endFrac - startFrac;
+  const minDayFrac = 1 / (SLOT_COUNT * 2);
+  return {
+    topPct: startFrac * 100,
+    heightPct: Math.max(heightFrac * 100, minDayFrac * 100),
+  };
+}
+
+function ReadOnlyEventBlock({
+  block,
+  day: d,
+  onBlockClick,
+  formatBlockTime,
+}: {
+  block: AgendaCalendarBlock;
+  day: Date;
+  onBlockClick?: (blockId: string) => void;
+  formatBlockTime: (ts: number) => string;
+}) {
+  const { topPct, heightPct } = eventBlockLayout(block, d);
+  return (
+    <button
+      type="button"
+      style={{
+        top: `${topPct}%`,
+        height: `${heightPct}%`,
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onBlockClick?.(block.id);
+      }}
+      className="absolute inset-x-1 z-10 min-w-0 max-w-full cursor-default touch-none overflow-hidden rounded-lg border border-slate-300/90 bg-slate-100/95 px-1.5 py-1 text-left shadow-sm"
+    >
+      <p className="break-words text-[11px] font-semibold leading-snug text-slate-800">
+        <MentionInlineText text={block.title} />
+      </p>
+      <p className="break-words text-[10px] leading-snug text-slate-600">
+        {formatBlockTime(block.start)} – {formatBlockTime(block.end)}
+      </p>
+      {block.meta ? (
+        <p className="line-clamp-2 break-words text-[10px] text-slate-600">
+          <MentionInlineText text={block.meta} />
+        </p>
+      ) : null}
     </button>
   );
 }
@@ -109,28 +197,33 @@ function DraggableEventBlock({
   formatBlockTime,
   getBlockDragId = agendaEventDragId,
 }: {
-  block: Block;
+  block: AgendaCalendarBlock;
   day: Date;
   onBlockClick?: (blockId: string) => void;
   formatBlockTime: (ts: number) => string;
   getBlockDragId?: (blockId: string) => string;
 }) {
+  if (block.readOnly) {
+    return (
+      <ReadOnlyEventBlock
+        block={block}
+        day={d}
+        onBlockClick={onBlockClick}
+        formatBlockTime={formatBlockTime}
+      />
+    );
+  }
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: getBlockDragId(block.id),
   });
-  const day0 = agendaDayStartMs(d);
-  const startFrac = agendaLocalFractionInDay(block.start, day0);
-  let endFrac = agendaLocalFractionInDay(block.end, day0);
-  if (endFrac < startFrac) endFrac = startFrac;
-  const heightFrac = endFrac - startFrac;
-  const minDayFrac = 1 / (SLOT_COUNT * 2);
+  const { topPct, heightPct } = eventBlockLayout(block, d);
   return (
     <button
       ref={setNodeRef}
       type="button"
       style={{
-        top: `${startFrac * 100}%`,
-        height: `${Math.max(heightFrac * 100, minDayFrac * 100)}%`,
+        top: `${topPct}%`,
+        height: `${heightPct}%`,
       }}
       {...listeners}
       {...attributes}
@@ -144,14 +237,14 @@ function DraggableEventBlock({
       )}
     >
       <p className="break-words text-[11px] font-semibold leading-snug text-accent-ink">
-        {block.title}
+        <MentionInlineText text={block.title} />
       </p>
       <p className="break-words text-[10px] leading-snug text-accent-ink-muted">
         {formatBlockTime(block.start)} – {formatBlockTime(block.end)}
       </p>
       {block.meta ? (
         <p className="line-clamp-2 break-words text-[10px] text-accent">
-          {block.meta}
+          <MentionInlineText text={block.meta} />
         </p>
       ) : null}
     </button>
@@ -220,10 +313,99 @@ function DroppableTaskStrip({
   );
 }
 
+function DueTasksDayOverflowModal({
+  day,
+  tasks,
+  onClose,
+  onDueTaskClick,
+  formatShortDateDisplay,
+}: {
+  day: Date;
+  tasks: AgendaDueTask[];
+  onClose: () => void;
+  onDueTaskClick?: (taskId: string) => void;
+  formatShortDateDisplay: (ts: number) => string;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/25 p-4 pt-[12vh] backdrop-blur-sm"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[min(70vh,420px)] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="due-tasks-overflow-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h2
+            id="due-tasks-overflow-title"
+            className="text-lg font-semibold text-slate-900"
+          >
+            Due tasks · {formatShortDateDisplay(day.getTime())}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <ul className="mt-4 space-y-2">
+          {tasks.map((t) => (
+            <li key={t.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  onDueTaskClick?.(t.id);
+                  onClose();
+                }}
+                className="w-full rounded-xl border border-emerald-200/90 bg-emerald-50/90 px-3 py-2.5 text-left transition hover:border-emerald-300 hover:bg-emerald-100/80"
+              >
+                <span className="block text-sm font-medium text-emerald-950">
+                  {t.title}
+                </span>
+                <span
+                  className={cn(
+                    "mt-1 block text-xs font-medium",
+                    taskDueDateTextClass({
+                      dueDate: t.dueDate,
+                      status: t.status ?? "todo",
+                    }),
+                  )}
+                >
+                  Due {formatShortDateDisplay(t.dueDate)}
+                </span>
+                {t.status ? (
+                  <span className="mt-1 inline-block rounded-md bg-white/80 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/80">
+                    {TASK_STATUS_LABEL[t.status]}
+                  </span>
+                ) : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   anchor: Date;
   mode: "day" | "week";
-  blocks: Block[];
+  blocks: AgendaCalendarBlock[];
   /** Tasks with a due date — shown above the time grid, not timed. */
   dueTasks?: AgendaDueTask[];
   onDueTaskClick?: (taskId: string) => void;
@@ -257,16 +439,27 @@ export function CalendarPanel({
   getBlockDragId = agendaEventDragId,
 }: Props) {
   const now = useNow();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const nowLineRef = useRef<HTMLDivElement>(null);
+  const didInitialScrollToNow = useRef(false);
+  const [dueTasksOverflow, setDueTasksOverflow] = useState<{
+    day: Date;
+    tasks: AgendaDueTask[];
+  } | null>(null);
 
   const start =
     mode === "day"
       ? startOfDay(anchor)
       : weekStartAnchor(anchor, weekStartsOn);
 
-  const days =
-    mode === "day"
-      ? [start]
-      : Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  const startMs = start.getTime();
+  const days = useMemo(
+    () =>
+      mode === "day"
+        ? [new Date(startMs)]
+        : Array.from({ length: 7 }, (_, i) => addDays(new Date(startMs), i)),
+    [mode, startMs],
+  );
 
   const slots = Array.from({ length: SLOT_COUNT }, (_, i) => i);
 
@@ -275,7 +468,51 @@ export function CalendarPanel({
     now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
   const nowTopPct = (minsNow / MINUTES_PER_DAY) * 100;
 
+  /** One-time on load: scroll so the "now" line sits slightly below the top of the scroll area. */
+  useEffect(() => {
+    if (didInitialScrollToNow.current) return;
+    const weekIncludesToday = days.some((d) => d.toDateString() === todayStr);
+    if (!weekIncludesToday) {
+      didInitialScrollToNow.current = true;
+      return;
+    }
+
+    const OFFSET_PX = 96;
+
+    function tryScroll(): boolean {
+      const container = scrollContainerRef.current;
+      const marker = nowLineRef.current;
+      if (!container || !marker) return false;
+      const c = container.getBoundingClientRect();
+      const m = marker.getBoundingClientRect();
+      const nextTop = container.scrollTop + (m.top - c.top) - OFFSET_PX;
+      container.scrollTo({ top: Math.max(0, nextTop), behavior: "smooth" });
+      return true;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 24;
+    function tick() {
+      if (didInitialScrollToNow.current) return;
+      if (tryScroll()) {
+        didInitialScrollToNow.current = true;
+        return;
+      }
+      attempts += 1;
+      if (attempts >= maxAttempts) {
+        didInitialScrollToNow.current = true;
+        return;
+      }
+      requestAnimationFrame(tick);
+    }
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(tick);
+    });
+  }, [days, todayStr]);
+
   return (
+    <>
     <div
       className={cn(
         "overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm",
@@ -295,7 +532,10 @@ export function CalendarPanel({
             : ""}
         </p>
       </div>
-      <div className="max-h-[min(70vh,56rem)] overflow-y-auto overscroll-contain">
+      <div
+        ref={scrollContainerRef}
+        className="max-h-[min(70vh,56rem)] overflow-y-auto overscroll-contain"
+      >
         <div className="grid min-w-0 grid-cols-[auto_1fr] items-start gap-0">
           <div className="sticky left-0 z-[1] shrink-0 border-r border-slate-200 bg-slate-50">
             <div className={DAY_HEADER_CLASS}>
@@ -351,32 +591,74 @@ export function CalendarPanel({
                   key={d.toISOString()}
                   className="min-w-0 overflow-hidden bg-white"
                 >
-                  <div className={DAY_HEADER_CLASS}>
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                  <div
+                    className={cn(
+                      DAY_HEADER_CLASS,
+                      mode === "week" &&
+                        isToday &&
+                        "bg-[rgba(var(--kruvan-brand-rgb),0.1)] ring-1 ring-inset ring-[rgba(var(--kruvan-brand-rgb),0.22)]",
+                    )}
+                  >
+                    <p
+                      className={cn(
+                        "text-[11px] font-medium uppercase tracking-wide",
+                        mode === "week" && isToday
+                          ? "font-semibold text-violet-900/90"
+                          : "text-slate-400",
+                      )}
+                    >
                       {d.toLocaleDateString(undefined, { weekday: "short" })}
                     </p>
-                    <p className="text-sm font-semibold text-slate-900">
+                    <p
+                      className={cn(
+                        "text-sm tabular-nums",
+                        mode === "week" && isToday
+                          ? "font-bold text-[color:var(--kruvan-brand)]"
+                          : "font-semibold text-slate-900",
+                      )}
+                    >
                       {d.getDate()}
                     </p>
                   </div>
                   <DroppableTaskStrip day={d}>
-                    <div className="flex flex-col gap-1">
-                      {dueTasks
-                        .filter((t) => {
-                          const td = new Date(t.dueDate);
-                          td.setHours(0, 0, 0, 0);
-                          const dd = new Date(d);
-                          dd.setHours(0, 0, 0, 0);
-                          return td.getTime() === dd.getTime();
-                        })
-                        .map((t) => (
-                          <DraggableDueTaskChip
-                            key={t.id}
-                            task={t}
-                            onDueTaskClick={onDueTaskClick}
-                          />
-                        ))}
-                    </div>
+                    {(() => {
+                      const dayTasks = dueTasks.filter((t) =>
+                        sameCalendarDay(t.dueDate, d),
+                      );
+                      const first = dayTasks[0];
+                      const extra = Math.max(0, dayTasks.length - 1);
+                      return (
+                        <div className="flex h-full min-h-0 items-center gap-1 overflow-hidden">
+                          {first ? (
+                            <DraggableDueTaskChip
+                              task={first}
+                              onDueTaskClick={onDueTaskClick}
+                              className={
+                                extra > 0
+                                  ? "min-w-0 flex-1 !w-auto max-w-[calc(100%-2.75rem)]"
+                                  : undefined
+                              }
+                            />
+                          ) : null}
+                          {extra > 0 ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDueTasksOverflow({
+                                  day: d,
+                                  tasks: dayTasks,
+                                });
+                              }}
+                              className="shrink-0 rounded-md border border-emerald-300/80 bg-emerald-100/90 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-emerald-900 shadow-sm transition hover:bg-emerald-200/90"
+                              aria-label={`${extra} more due tasks this day`}
+                            >
+                              +{extra}
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                   </DroppableTaskStrip>
                   <div
                     className="relative flex min-h-0 min-w-0 flex-col overflow-hidden px-1"
@@ -417,6 +699,7 @@ export function CalendarPanel({
                       ))}
                     {isToday ? (
                       <div
+                        ref={nowLineRef}
                         className="pointer-events-none absolute inset-x-0 z-30 flex -translate-y-1/2 items-center"
                         style={{ top: `${nowTopPct}%` }}
                         aria-hidden
@@ -432,5 +715,15 @@ export function CalendarPanel({
         </div>
       </div>
     </div>
+    {dueTasksOverflow ? (
+      <DueTasksDayOverflowModal
+        day={dueTasksOverflow.day}
+        tasks={dueTasksOverflow.tasks}
+        onClose={() => setDueTasksOverflow(null)}
+        onDueTaskClick={onDueTaskClick}
+        formatShortDateDisplay={formatShortDateDisplay}
+      />
+    ) : null}
+    </>
   );
 }

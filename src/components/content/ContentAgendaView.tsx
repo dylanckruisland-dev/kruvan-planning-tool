@@ -8,7 +8,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import { CalendarMonthPanel } from "@/components/calendar/CalendarMonthPanel";
@@ -86,6 +86,12 @@ export function ContentAgendaView({
     { workspaceId, start, end },
   );
 
+  const [upcomingNow, setUpcomingNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setUpcomingNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const blocks = useMemo(() => {
     if (!scheduledInRange) return [];
     return scheduledInRange.map((p) => {
@@ -102,12 +108,11 @@ export function ContentAgendaView({
 
   const upcomingSidebar = useMemo(() => {
     if (!workspacePlans) return [];
-    const now = Date.now();
     return [...workspacePlans]
-      .filter((p) => p.scheduledFor != null && p.scheduledFor >= now)
+      .filter((p) => p.scheduledFor != null && p.scheduledFor >= upcomingNow)
       .sort((a, b) => (a.scheduledFor ?? 0) - (b.scheduledFor ?? 0))
       .slice(0, 20);
-  }, [workspacePlans]);
+  }, [workspacePlans, upcomingNow]);
 
   function onSlotClick(day: Date, hour: number, minute: number) {
     const s = new Date(day);

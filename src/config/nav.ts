@@ -4,6 +4,7 @@ import {
   Clapperboard,
   FolderKanban,
   LayoutGrid,
+  Mail,
   Settings,
   StickyNote,
 } from "lucide-react";
@@ -16,6 +17,7 @@ export const APP_NAV_LINKS = [
   { to: "/agenda", label: "Agenda", icon: Calendar },
   { to: "/notes", label: "Notes", icon: StickyNote },
   { to: "/content", label: "Content", icon: Clapperboard },
+  { to: "/messages", label: "Messages", icon: Mail },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

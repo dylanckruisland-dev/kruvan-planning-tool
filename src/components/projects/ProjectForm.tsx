@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@cvx/_generated/api";
 import type { Id } from "@cvx/_generated/dataModel";
 import type { ProjectFormValues } from "@/lib/project-form";
+import { MentionTextField } from "@/components/mentions/MentionTextField";
 import { cn } from "@/lib/cn";
 
 type TagRow = { _id: string; name: string };
@@ -102,14 +103,26 @@ export function ProjectForm({
         >
           Name <span className="text-rose-600">*</span>
         </label>
-        <input
-          id={`${idPrefix}-name`}
-          value={values.name}
-          onChange={(e) => setValues((v) => ({ ...v, name: e.target.value }))}
-          className={inputClass}
-          placeholder="Project name"
-          required
-        />
+        {workspaceId ? (
+          <MentionTextField
+            id={`${idPrefix}-name`}
+            value={values.name}
+            onValueChange={(name) => setValues((v) => ({ ...v, name }))}
+            workspaceId={workspaceId}
+            className={inputClass}
+            placeholder="Project name"
+            required
+          />
+        ) : (
+          <input
+            id={`${idPrefix}-name`}
+            value={values.name}
+            onChange={(e) => setValues((v) => ({ ...v, name: e.target.value }))}
+            className={inputClass}
+            placeholder="Project name"
+            required
+          />
+        )}
       </div>
 
       <div>
@@ -119,16 +132,31 @@ export function ProjectForm({
         >
           Description
         </label>
-        <textarea
-          id={`${idPrefix}-desc`}
-          value={values.description}
-          onChange={(e) =>
-            setValues((v) => ({ ...v, description: e.target.value }))
-          }
-          rows={3}
-          className={cn(inputClass, "resize-none")}
-          placeholder="What is this project about?"
-        />
+        {workspaceId ? (
+          <MentionTextField
+            multiline
+            id={`${idPrefix}-desc`}
+            value={values.description}
+            onValueChange={(description) =>
+              setValues((v) => ({ ...v, description }))
+            }
+            workspaceId={workspaceId}
+            rows={3}
+            className={cn(inputClass, "resize-none")}
+            placeholder="What is this project about?"
+          />
+        ) : (
+          <textarea
+            id={`${idPrefix}-desc`}
+            value={values.description}
+            onChange={(e) =>
+              setValues((v) => ({ ...v, description: e.target.value }))
+            }
+            rows={3}
+            className={cn(inputClass, "resize-none")}
+            placeholder="What is this project about?"
+          />
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

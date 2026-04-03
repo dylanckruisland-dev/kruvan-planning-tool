@@ -8,6 +8,10 @@ import {
 } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import type { Doc, Id } from "@cvx/_generated/dataModel";
+import {
+  projectDetailDefaultSearch,
+  projectsListSearch,
+} from "@/lib/router-search-defaults";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -97,7 +101,7 @@ function buildTree(
           )}
           <Link
             to="/projects"
-            search={{ project: undefined, folder: id }}
+            search={{ ...projectsListSearch, project: undefined, folder: id }}
             className={cn(
               "flex min-w-0 flex-1 items-center rounded-lg py-1.5 pr-2 text-left text-[13px] transition",
               active
@@ -126,7 +130,7 @@ function buildTree(
                     <Link
                       to="/projects/$projectId"
                       params={{ projectId: String(p._id) }}
-                      search={{ tab: "overview", taskView: "list" }}
+                      search={{ ...projectDetailDefaultSearch }}
                       className={cn(
                         "flex min-w-0 items-center gap-1.5 rounded-lg py-1 pr-2 text-left text-[12.5px] transition",
                         projectActive

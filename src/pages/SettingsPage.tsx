@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { useWorkspace } from "@/hooks/useWorkspace";
-import type { Id } from "@cvx/_generated/dataModel";
-import { Trash2 } from "lucide-react";
 import { normalizeWorkspaceAccent } from "@/lib/workspace-accent";
+import { WorkspaceCollaborationSection } from "@/components/settings/WorkspaceCollaborationSection";
+import { IcsCalendarSection } from "@/components/settings/IcsCalendarSection";
+import { useTabTitle } from "@/hooks/useTabTitle";
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none input-focus-accent";
@@ -20,6 +21,7 @@ const LANDING_OPTIONS = [
   { value: "/notes", label: "Notes" },
   { value: "/content", label: "Content" },
   { value: "/projects", label: "Projects" },
+  { value: "/messages", label: "Messages" },
   { value: "/settings", label: "Settings" },
 ] as const;
 
@@ -35,21 +37,9 @@ function timeZoneOptions(): string[] {
 }
 
 export function SettingsPage() {
+  useTabTitle("Settings");
   const { workspaceId, workspace } = useWorkspace();
-  const members = useQuery(
-    api.workspaceMembers.listByWorkspace,
-    workspaceId ? { workspaceId } : "skip",
-  );
-  const createMember = useMutation(api.workspaceMembers.create);
-  const removeMember = useMutation(api.workspaceMembers.remove);
   const updateWorkspace = useMutation(api.workspaces.update);
-
-  const [memberName, setMemberName] = useState("");
-  const [memberEmail, setMemberEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [removingId, setRemovingId] = useState<Id<"workspaceMembers"> | null>(
-    null,
-  );
 
   const [wsName, setWsName] = useState("");
   const [accent, setAccent] = useState("#4f46e5");
@@ -77,7 +67,12 @@ export function SettingsPage() {
     setDefaultTaskView(
       workspace.defaultTaskView === "board" ? "board" : "list",
     );
-    setDefaultLandingRoute(workspace.defaultLandingRoute ?? "/");
+    {
+      const route = workspace.defaultLandingRoute as string | undefined;
+      setDefaultLandingRoute(
+        route === "/chat" ? "/messages" : (route ?? "/"),
+      );
+    }
     setTimezone(workspace.timezone?.trim() ?? "");
     setTimeFormat(
       workspace.timeFormat === "12" || workspace.timeFormat === "24"
@@ -87,42 +82,9 @@ export function SettingsPage() {
     setWeekStartsOn(
       workspace.weekStartsOn === "sunday" ? "sunday" : "monday",
     );
-  }, [workspace?._id]);
-
-  const sorted = useMemo(() => {
-    const list = members ?? [];
-    return [...list].sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-    );
-  }, [members]);
+  }, [workspace]);
 
   const tzList = useMemo(() => timeZoneOptions(), []);
-
-  async function handleAdd(e: React.FormEvent) {
-    e.preventDefault();
-    if (!workspaceId || !memberName.trim()) return;
-    setBusy(true);
-    try {
-      await createMember({
-        workspaceId,
-        name: memberName.trim(),
-        email: memberEmail.trim() || undefined,
-      });
-      setMemberName("");
-      setMemberEmail("");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleRemove(id: Id<"workspaceMembers">) {
-    setRemovingId(id);
-    try {
-      await removeMember({ memberId: id });
-    } finally {
-      setRemovingId(null);
-    }
-  }
 
   async function saveWorkspaceProfile(e: React.FormEvent) {
     e.preventDefault();
@@ -159,8 +121,12 @@ export function SettingsPage() {
     <div className="space-y-6">
       <SectionHeader
         title="Settings"
-        description="Workspace preferences, defaults, and who can be assigned to tasks."
+        description="Workspace preferences, collaboration, and defaults."
       />
+
+      <WorkspaceCollaborationSection workspaceId={workspaceId} />
+
+      <IcsCalendarSection workspaceId={workspaceId} />
 
       <form
         onSubmit={(e) => void saveWorkspaceProfile(e)}
@@ -344,93 +310,6 @@ export function SettingsPage() {
           </button>
         </div>
       </form>
-
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">
-          Task assignees
-        </h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Names you add here appear in the assignee menu on tasks across this
-          workspace. Removing someone clears them from any tasks they were
-          assigned to.
-        </p>
-
-        {members === undefined ? (
-          <div className="mt-4 h-24 animate-pulse rounded-xl bg-slate-100" />
-        ) : sorted.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-500">
-            No assignees yet. Add a name below to get started.
-          </p>
-        ) : (
-          <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100">
-            {sorted.map((m) => (
-              <li
-                key={String(m._id)}
-                className="flex items-center justify-between gap-3 px-3 py-2.5 first:rounded-t-xl last:rounded-b-xl"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-slate-900">
-                    {m.name}
-                  </p>
-                  {m.email ? (
-                    <p className="truncate text-xs text-slate-500">{m.email}</p>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleRemove(m._id)}
-                  disabled={removingId === m._id}
-                  className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
-                  aria-label={`Remove ${m.name}`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <form onSubmit={(e) => void handleAdd(e)} className="mt-6 space-y-3">
-          <p className="text-xs font-medium text-slate-600">Add assignee</p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="member-name" className="text-xs text-slate-500">
-                Name <span className="text-rose-600">*</span>
-              </label>
-              <input
-                id="member-name"
-                value={memberName}
-                onChange={(e) => setMemberName(e.target.value)}
-                placeholder="e.g. Alex Kim"
-                className={inputClass}
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="member-email" className="text-xs text-slate-500">
-                Email (optional)
-              </label>
-              <input
-                id="member-email"
-                type="email"
-                value={memberEmail}
-                onChange={(e) => setMemberEmail(e.target.value)}
-                placeholder="alex@…"
-                className={inputClass}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={busy || !workspaceId || !memberName.trim()}
-              className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-40"
-            >
-              Add assignee
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
   );
 }

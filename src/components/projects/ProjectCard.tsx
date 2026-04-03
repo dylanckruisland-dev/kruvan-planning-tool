@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { PriorityBadge } from "@/components/ui/PriorityBadge";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatShortDate } from "@/lib/dates";
+import { projectDetailDefaultSearch } from "@/lib/router-search-defaults";
 import { cn } from "@/lib/cn";
 import type { Doc } from "@cvx/_generated/dataModel";
 
@@ -19,7 +20,7 @@ export function ProjectCard({ project, taskCount, className }: Props) {
     <Link
       to="/projects/$projectId"
       params={{ projectId: String(project._id) }}
-      search={{ tab: "overview", taskView: "list" }}
+      search={{ ...projectDetailDefaultSearch }}
       aria-label={`Open project ${project.name}`}
       className={cn(
         "group flex flex-col rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md",

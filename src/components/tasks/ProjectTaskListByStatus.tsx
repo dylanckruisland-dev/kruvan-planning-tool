@@ -1,17 +1,24 @@
 import {
-  closestCorners,
+  closestCenter,
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
-  useDraggable,
   useDroppable,
   useSensor,
   useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
-import type { DragEndEvent } from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useMutation } from "convex/react";
-import { useState, type ReactNode } from "react";
+import { useMutation, useQuery } from "convex/react";
+import { useMemo, useState, type ReactNode } from "react";
 import { api } from "@cvx/_generated/api";
 import { TaskRow } from "@/components/tasks/TaskRow";
 import {
@@ -20,18 +27,23 @@ import {
   TASK_STATUS_ORDER,
   type TaskStatus,
 } from "@/lib/task-status";
+import { runTaskDragEnd, taskColumnDroppableId } from "@/lib/task-board-reorder";
+import {
+  type TaskDueSortDir,
+  sortTasksByDueDate,
+} from "@/lib/task-due-sort";
 import { cn } from "@/lib/cn";
 import type { Doc, Id } from "@cvx/_generated/dataModel";
 import { ChevronRight, GripVertical, Plus } from "lucide-react";
 
 type Task = Doc<"tasks">;
 
-function columnId(status: TaskStatus) {
-  return `col-${status}`;
-}
-
 type Props = {
+  workspaceId: Id<"workspaces">;
+  projectId?: Id<"projects">;
   tasks: Task[];
+  /** When set, tasks in each status column are ordered by due date. */
+  dueSort?: TaskDueSortDir;
   memberName: Map<string, string>;
   legacyUserName: Map<string, string>;
   tagMap: Map<string, string>;
@@ -50,12 +62,14 @@ function DroppableStatusSection({
   status: TaskStatus;
   children: ReactNode;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: columnId(status) });
+  const { setNodeRef, isOver } = useDroppable({
+    id: taskColumnDroppableId(status),
+  });
   return (
     <section
       ref={setNodeRef}
       className={cn(
-        "overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/80 shadow-sm transition",
+        "overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/80 shadow-sm transition duration-200",
         isOver && "ring-2 ring-accent-dnd",
       )}
     >
@@ -64,18 +78,26 @@ function DroppableStatusSection({
   );
 }
 
-function DraggableTaskRow({
+function SortableTaskRow({
   taskId,
   children,
 }: {
   taskId: Id<"tasks">;
   children: ReactNode;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id: String(taskId) });
-  const style = transform
-    ? { transform: CSS.Translate.toString(transform) }
-    : undefined;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: String(taskId) });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   return (
     <div
@@ -89,7 +111,7 @@ function DraggableTaskRow({
       <button
         type="button"
         className="flex shrink-0 cursor-grab touch-none items-center self-stretch rounded-l-xl border border-r-0 border-slate-200/80 bg-slate-50 px-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 active:cursor-grabbing"
-        aria-label="Drag to move task"
+        aria-label="Drag to reorder or move task"
         {...listeners}
         {...attributes}
       >
@@ -101,7 +123,10 @@ function DraggableTaskRow({
 }
 
 export function ProjectTaskListByStatus({
+  workspaceId,
+  projectId,
   tasks,
+  dueSort,
   memberName,
   legacyUserName,
   tagMap,
@@ -112,6 +137,21 @@ export function ProjectTaskListByStatus({
   onDeleteTask,
 }: Props) {
   const update = useMutation(api.tasks.update);
+  const reorderColumn = useMutation(api.tasks.reorderTasksInColumn);
+
+  const allWorkspaceTasks = useQuery(api.tasks.listByWorkspace, {
+    workspaceId,
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
   const [activeDragId, setActiveDragId] = useState<Id<"tasks"> | null>(null);
   const [open, setOpen] = useState<Record<TaskStatus, boolean>>(() => {
     const init = {} as Record<TaskStatus, boolean>;
@@ -119,52 +159,73 @@ export function ProjectTaskListByStatus({
     return init;
   });
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-  );
+  const allTasks = allWorkspaceTasks ?? tasks;
 
-  async function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    setActiveDragId(null);
-    if (!over) return;
-    const taskId = active.id as Id<"tasks">;
-    let targetStatus: TaskStatus | undefined;
-    const overStr = String(over.id);
-    if (overStr.startsWith("col-")) {
-      targetStatus = overStr.slice(4) as TaskStatus;
-    } else {
-      const t = tasks.find((x) => String(x._id) === overStr);
-      targetStatus = t?.status;
+  const taskById = useMemo(() => {
+    const m = new Map<string, Task>();
+    for (const t of allTasks) {
+      m.set(String(t._id), t);
     }
-    if (!targetStatus) return;
-    const current = tasks.find((x) => String(x._id) === String(taskId));
-    if (!current || current.status === targetStatus) return;
-    await update({ taskId, status: targetStatus });
-  }
+    return m;
+  }, [allTasks]);
+
+  const byStatus = useMemo(() => {
+    const m = new Map<TaskStatus, Task[]>();
+    for (const s of TASK_STATUS_ORDER) {
+      m.set(s, []);
+    }
+    for (const t of tasks) {
+      const list = m.get(t.status);
+      if (list) list.push(t);
+    }
+    for (const s of TASK_STATUS_ORDER) {
+      const list = m.get(s);
+      if (!list) continue;
+      if (dueSort) {
+        m.set(s, sortTasksByDueDate(list, dueSort));
+      } else {
+        list.sort(
+          (a, b) =>
+            (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+            String(a._id).localeCompare(String(b._id)),
+        );
+      }
+    }
+    return m;
+  }, [tasks, dueSort]);
 
   const activeDragTask =
     activeDragId != null
       ? tasks.find((x) => String(x._id) === String(activeDragId))
       : undefined;
 
-  const byStatus = new Map<TaskStatus, Task[]>();
-  for (const s of TASK_STATUS_ORDER) {
-    byStatus.set(s, []);
+  function handleDragStart(event: DragStartEvent) {
+    setActiveDragId(event.active.id as Id<"tasks">);
   }
-  for (const t of tasks) {
-    const list = byStatus.get(t.status);
-    if (list) list.push(t);
+
+  async function handleDragEnd(event: DragEndEvent) {
+    setActiveDragId(null);
+    await runTaskDragEnd({
+      event,
+      allTasks,
+      workspaceId,
+      projectId,
+      update: (args) => update(args),
+      reorderColumn: (args) => reorderColumn(args),
+    });
+  }
+
+  if (allWorkspaceTasks === undefined) {
+    return (
+      <div className="h-40 animate-pulse rounded-2xl bg-slate-200/80" />
+    );
   }
 
   return (
     <DndContext
-      collisionDetection={closestCorners}
+      collisionDetection={closestCenter}
       sensors={sensors}
-      onDragStart={({ active }) =>
-        setActiveDragId(active.id as Id<"tasks">)
-      }
+      onDragStart={handleDragStart}
       onDragCancel={() => setActiveDragId(null)}
       onDragEnd={(e) => void handleDragEnd(e)}
     >
@@ -172,6 +233,7 @@ export function ProjectTaskListByStatus({
         {TASK_STATUS_ORDER.map((status) => {
           const list = byStatus.get(status) ?? [];
           const isOpen = open[status];
+          const sortableIds = list.map((t) => String(t._id));
           return (
             <DroppableStatusSection key={status} status={status}>
               <button
@@ -211,38 +273,46 @@ export function ProjectTaskListByStatus({
                         No tasks in this status.
                       </p>
                     ) : (
-                      list.map((t) => (
-                        <div key={t._id} className="px-1 py-1 sm:px-2">
-                          <DraggableTaskRow taskId={t._id}>
-                            <TaskRow
-                              task={t}
-                              projectName={
-                                projectNameById && t.projectId
-                                  ? projectNameById.get(String(t.projectId))
-                                  : undefined
-                              }
-                              assigneeName={
-                                t.assigneeMemberId
-                                  ? memberName.get(String(t.assigneeMemberId))
-                                  : t.assigneeId
-                                    ? legacyUserName.get(String(t.assigneeId))
+                      <SortableContext
+                        items={sortableIds}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {list.map((t) => (
+                          <div key={t._id} className="px-1 py-1 sm:px-2">
+                            <SortableTaskRow taskId={t._id}>
+                              <TaskRow
+                                task={t}
+                                taskById={taskById}
+                                projectName={
+                                  projectNameById && t.projectId
+                                    ? projectNameById.get(String(t.projectId))
                                     : undefined
-                              }
-                              labels={t.labelIds.map(
-                                (id) => tagMap.get(String(id)) ?? "",
-                              )}
-                              onToggle={() => onToggleTask(t._id)}
-                              onOpen={() => onOpenTask(t._id)}
-                              onDelete={
-                                onDeleteTask
-                                  ? () => onDeleteTask(t._id)
-                                  : undefined
-                              }
-                              className="rounded-r-xl rounded-l-none border border-l-0 border-slate-200/80 shadow-sm ring-0"
-                            />
-                          </DraggableTaskRow>
-                        </div>
-                      ))
+                                }
+                                assigneeName={
+                                  t.assigneeMemberId
+                                    ? memberName.get(
+                                        String(t.assigneeMemberId),
+                                      )
+                                    : t.assigneeId
+                                      ? legacyUserName.get(String(t.assigneeId))
+                                      : undefined
+                                }
+                                labels={t.labelIds.map(
+                                  (id) => tagMap.get(String(id)) ?? "",
+                                )}
+                                onToggle={() => onToggleTask(t._id)}
+                                onOpen={() => onOpenTask(t._id)}
+                                onDelete={
+                                  onDeleteTask
+                                    ? () => onDeleteTask(t._id)
+                                    : undefined
+                                }
+                                className="rounded-r-xl rounded-l-none border border-l-0 border-slate-200/80 shadow-sm ring-0"
+                              />
+                            </SortableTaskRow>
+                          </div>
+                        ))}
+                      </SortableContext>
                     )}
                   </div>
                   <div className="border-t border-slate-100 px-3 py-2">
@@ -262,7 +332,7 @@ export function ProjectTaskListByStatus({
         })}
       </div>
 
-      <DragOverlay zIndex={10000}>
+      <DragOverlay zIndex={10000} dropAnimation={{ duration: 180, easing: "ease" }}>
         {activeDragTask ? (
           <div className="flex max-w-[min(100vw-2rem,48rem)] cursor-grabbing items-stretch gap-0 rounded-xl shadow-[0_16px_40px_-12px_rgba(15,23,42,0.22)] ring-2 ring-accent-dnd-strong">
             <div
@@ -274,6 +344,7 @@ export function ProjectTaskListByStatus({
             <div className="min-w-0 flex-1">
               <TaskRow
                 task={activeDragTask}
+                taskById={taskById}
                 projectName={
                   projectNameById && activeDragTask.projectId
                     ? projectNameById.get(String(activeDragTask.projectId))

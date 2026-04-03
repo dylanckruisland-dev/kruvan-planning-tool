@@ -1,11 +1,16 @@
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useToast } from "@/contexts/ToastContext";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { MentionTextField } from "@/components/mentions/MentionTextField";
+import { ProjectSearchSelect } from "@/components/ui/ProjectSearchSelect";
 import { NoteRichEditor } from "@/components/notes/NoteRichEditor";
-import { useMutation } from "convex/react";
+import { NoteVoiceInput } from "@/components/notes/NoteVoiceInput";
+import { bodyToHtmlForEditor, htmlToPlainText } from "@/lib/note-html";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import type { Doc, Id } from "@cvx/_generated/dataModel";
+import { cn } from "@/lib/cn";
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none input-focus-accent";
@@ -16,7 +21,7 @@ type Props = {
   /** When null, modal creates a new note. */
   note: Doc<"notes"> | null;
   workspaceId: Id<"workspaces">;
-  /** Omit for a workspace-only note (e.g. Notes page). */
+  /** When set, new notes are linked to this project (e.g. project detail page). */
   projectId?: Id<"projects">;
   projectName?: string;
   /** Called after a new note is saved (with its id). */
@@ -36,11 +41,26 @@ export function NoteEditModal({
   const createNote = useMutation(api.notes.create);
   const updateNote = useMutation(api.notes.update);
   const removeNote = useMutation(api.notes.remove);
+  const projects = useQuery(
+    api.projects.listByWorkspace,
+    open && workspaceId && note === null && projectId === undefined
+      ? { workspaceId }
+      : "skip",
+  );
   const [busy, setBusy] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [selectedProjectId, setSelectedProjectId] =
+    useState<Id<"projects"> | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  /** Bumps when voice inserts text so the rich editor re-syncs from `body`. */
+  const [editorKey, setEditorKey] = useState(0);
+
+  const effectiveProjectId = useMemo(
+    () => projectId ?? selectedProjectId ?? undefined,
+    [projectId, selectedProjectId],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -50,8 +70,21 @@ export function NoteEditModal({
     } else {
       setTitle("");
       setBody("");
+      setEditorKey(0);
+      if (projectId === undefined) setSelectedProjectId(null);
     }
-  }, [open, note]);
+  }, [open, note, projectId]);
+
+  function insertVoicePlainText(plain: string) {
+    setBody((prev) => {
+      const prevPlain = htmlToPlainText(prev);
+      const merged = prevPlain.trim()
+        ? `${prevPlain}\n\n${plain}`
+        : plain;
+      return bodyToHtmlForEditor(merged);
+    });
+    setEditorKey((k) => k + 1);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -94,7 +127,7 @@ export function NoteEditModal({
           workspaceId,
           title: t,
           body: b,
-          ...(projectId ? { projectId } : {}),
+          ...(effectiveProjectId ? { projectId: effectiveProjectId } : {}),
         });
         onCreated?.(noteId);
       } else {
@@ -151,7 +184,26 @@ export function NoteEditModal({
           </button>
         </div>
         <p className="mt-1 text-xs text-slate-500">
-          {projectName ? (
+          {isCreate ? (
+            projectId !== undefined ? (
+              <>
+                Project:{" "}
+                <span className="font-medium text-slate-700">
+                  {projectName ?? "—"}
+                </span>
+              </>
+            ) : effectiveProjectId && projects ? (
+              <>
+                Project:{" "}
+                <span className="font-medium text-slate-700">
+                  {projects.find((p) => p._id === effectiveProjectId)?.name ??
+                    "—"}
+                </span>
+              </>
+            ) : (
+              <span className="text-slate-500">No project linked</span>
+            )
+          ) : projectName ? (
             <>
               Project:{" "}
               <span className="font-medium text-slate-700">{projectName}</span>
@@ -169,23 +221,56 @@ export function NoteEditModal({
             >
               Title
             </label>
-            <input
+            <MentionTextField
               id="ne-title"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onValueChange={setTitle}
+              workspaceId={workspaceId}
+              mentionEnabled={open}
               placeholder="Note title"
               className={inputClass}
               autoFocus
             />
           </div>
+          {isCreate && projectId === undefined ? (
+            <div>
+              <label
+                htmlFor="ne-project"
+                className="text-xs font-medium text-slate-600"
+              >
+                Project
+              </label>
+              {projects === undefined ? (
+                <div className="mt-1 h-10 animate-pulse rounded-xl bg-slate-100" />
+              ) : (
+                <ProjectSearchSelect
+                  id="ne-project"
+                  projects={projects}
+                  value={selectedProjectId}
+                  onChange={setSelectedProjectId}
+                />
+              )}
+            </div>
+          ) : null}
           <div>
             <p className="text-xs font-medium text-slate-600">Content</p>
+            {isCreate ? (
+              <div className="mt-1">
+                <NoteVoiceInput
+                  onInsertPlainText={insertVoicePlainText}
+                  disabled={busy}
+                />
+              </div>
+            ) : null}
             <NoteRichEditor
-              key={note?._id ?? "new"}
+              key={`${note?._id ?? "new"}-${editorKey}`}
               body={body}
               debounceMs={0}
               onSave={(html) => setBody(html)}
-              className="mt-1 min-h-[min(20rem,45vh)]"
+              className={cn(
+                "mt-1 min-h-[min(20rem,45vh)]",
+                isCreate && "mt-2",
+              )}
             />
           </div>
 

@@ -3,6 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { PriorityBadge } from "@/components/ui/PriorityBadge";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatShortDate } from "@/lib/dates";
+import { projectDetailDefaultSearch } from "@/lib/router-search-defaults";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { cn } from "@/lib/cn";
 import type { Doc } from "@cvx/_generated/dataModel";
 
@@ -36,7 +38,7 @@ export function ProjectRow({
     <Link
       to="/projects/$projectId"
       params={{ projectId: String(project._id) }}
-      search={{ tab: "overview", taskView: "list" }}
+      search={{ ...projectDetailDefaultSearch }}
       className="grid min-w-0 flex-1 grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 md:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))_auto]"
     >
       <div className="flex min-w-0 items-start gap-3">
@@ -60,7 +62,7 @@ export function ProjectRow({
           </p>
           {project.description ? (
             <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">
-              {project.description}
+              <MentionInlineText text={project.description} />
             </p>
           ) : null}
         </div>

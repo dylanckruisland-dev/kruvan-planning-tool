@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "convex/react";
 import { useToast } from "@/contexts/ToastContext";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useMutation } from "convex/react";
@@ -8,9 +9,11 @@ import { api } from "@cvx/_generated/api";
 import {
   emptyTaskFormValues,
   normalizeSubtasksForSave,
+  recurrencePayloadFromForm,
   taskToFormValues,
   type TaskFormValues,
 } from "@/lib/task-form";
+import { MentionTextField } from "@/components/mentions/MentionTextField";
 import { TaskSubtasksField } from "@/components/tasks/TaskSubtasksField";
 import type { TaskStatus } from "@/lib/task-status";
 import { dateInputValueToTimestamp } from "@/lib/dates";
@@ -54,6 +57,17 @@ export function TaskEditModal({
   const [values, setValues] = useState<TaskFormValues | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const allWorkspaceTasks = useQuery(
+    api.tasks.listByWorkspace,
+    open && workspaceId ? { workspaceId } : "skip",
+  );
+  const blockerOptions = useMemo(() => {
+    if (!allWorkspaceTasks) return [];
+    return allWorkspaceTasks.filter(
+      (t) => !task || String(t._id) !== String(task._id),
+    );
+  }, [allWorkspaceTasks, task]);
 
   useEffect(() => {
     if (!open) {
@@ -116,6 +130,10 @@ export function TaskEditModal({
     setBusy(true);
     try {
       const subtasks = normalizeSubtasksForSave(values.subtasks);
+      const recurrence = recurrencePayloadFromForm(values);
+      const blockedByTaskId = values.blockedByTaskId.trim()
+        ? (values.blockedByTaskId as Id<"tasks">)
+        : undefined;
       if (isCreate) {
         await createTask({
           workspaceId,
@@ -132,6 +150,8 @@ export function TaskEditModal({
             : undefined,
           labelIds: values.labelIds.map((id) => id as Id<"tags">),
           ...(subtasks ? { subtasks } : {}),
+          ...(blockedByTaskId ? { blockedByTaskId } : {}),
+          ...(recurrence ? { recurrence } : {}),
         });
       } else {
         await updateTask({
@@ -148,6 +168,8 @@ export function TaskEditModal({
             : null,
           labelIds: values.labelIds.map((id) => id as Id<"tags">),
           subtasks: subtasks ?? [],
+          blockedByTaskId: blockedByTaskId ?? null,
+          recurrence: recurrence ?? null,
         });
       }
       onClose();
@@ -205,12 +227,14 @@ export function TaskEditModal({
             <label htmlFor="te-title" className="text-xs font-medium text-slate-600">
               Title <span className="text-rose-600">*</span>
             </label>
-            <input
+            <MentionTextField
               id="te-title"
               value={values.title}
-              onChange={(e) =>
-                setValues((v) => (v ? { ...v, title: e.target.value } : v))
+              onValueChange={(title) =>
+                setValues((v) => (v ? { ...v, title } : v))
               }
+              workspaceId={workspaceId}
+              mentionEnabled={open}
               className={inputClass}
               required
             />
@@ -220,14 +244,15 @@ export function TaskEditModal({
             <label htmlFor="te-desc" className="text-xs font-medium text-slate-600">
               Description
             </label>
-            <textarea
+            <MentionTextField
+              multiline
               id="te-desc"
               value={values.description}
-              onChange={(e) =>
-                setValues((v) =>
-                  v ? { ...v, description: e.target.value } : v,
-                )
+              onValueChange={(description) =>
+                setValues((v) => (v ? { ...v, description } : v))
               }
+              workspaceId={workspaceId}
+              mentionEnabled={open}
               rows={3}
               className={cn(inputClass, "resize-none")}
             />
@@ -344,6 +369,133 @@ export function TaskEditModal({
               </p>
             </div>
           </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label
+                htmlFor="te-blocked"
+                className="text-xs font-medium text-slate-600"
+              >
+                Blocked by
+              </label>
+              <select
+                id="te-blocked"
+                value={values.blockedByTaskId}
+                onChange={(e) =>
+                  setValues((v) =>
+                    v ? { ...v, blockedByTaskId: e.target.value } : v,
+                  )
+                }
+                className={inputClass}
+              >
+                <option value="">None</option>
+                {blockerOptions.map((t) => (
+                  <option key={String(t._id)} value={String(t._id)}>
+                    {t.title}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-400">
+                This task stays blocked until the other task is done.
+              </p>
+            </div>
+            <div>
+              <label
+                htmlFor="te-rec-mode"
+                className="text-xs font-medium text-slate-600"
+              >
+                Repeats
+              </label>
+              <select
+                id="te-rec-mode"
+                value={values.recurrenceMode}
+                onChange={(e) =>
+                  setValues((v) =>
+                    v
+                      ? {
+                          ...v,
+                          recurrenceMode: e.target.value as TaskFormValues["recurrenceMode"],
+                        }
+                      : v,
+                  )
+                }
+                className={inputClass}
+              >
+                <option value="none">Does not repeat</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+          </div>
+
+          {values.recurrenceMode !== "none" ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="te-rec-int"
+                  className="text-xs font-medium text-slate-600"
+                >
+                  Every (interval)
+                </label>
+                <input
+                  id="te-rec-int"
+                  type="number"
+                  min={1}
+                  value={values.recurrenceInterval}
+                  onChange={(e) =>
+                    setValues((v) =>
+                      v
+                        ? {
+                            ...v,
+                            recurrenceInterval: Math.max(
+                              1,
+                              Number(e.target.value) || 1,
+                            ),
+                          }
+                        : v,
+                    )
+                  }
+                  className={inputClass}
+                />
+              </div>
+              {values.recurrenceMode === "weekly" ? (
+                <div>
+                  <label
+                    htmlFor="te-rec-wd"
+                    className="text-xs font-medium text-slate-600"
+                  >
+                    On weekday
+                  </label>
+                  <select
+                    id="te-rec-wd"
+                    value={values.recurrenceWeekday}
+                    onChange={(e) =>
+                      setValues((v) =>
+                        v
+                          ? {
+                              ...v,
+                              recurrenceWeekday: Number(e.target.value),
+                            }
+                          : v,
+                      )
+                    }
+                    className={inputClass}
+                  >
+                    <option value={0}>Sunday</option>
+                    <option value={1}>Monday</option>
+                    <option value={2}>Tuesday</option>
+                    <option value={3}>Wednesday</option>
+                    <option value={4}>Thursday</option>
+                    <option value={5}>Friday</option>
+                    <option value={6}>Saturday</option>
+                  </select>
+                </div>
+              ) : (
+                <div />
+              )}
+            </div>
+          ) : null}
 
           {tags.length > 0 ? (
             <div>

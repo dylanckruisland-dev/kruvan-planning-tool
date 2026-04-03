@@ -2,17 +2,35 @@ import { CheckCircle2, Circle, ListChecks, Trash2 } from "lucide-react";
 import { PriorityBadge } from "@/components/ui/PriorityBadge";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatShortDate } from "@/lib/dates";
+import { taskDueDateTextClass } from "@/lib/due-urgency";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { cn } from "@/lib/cn";
 import { taskSubtaskProgress } from "@/lib/task-form";
+import { TaskAssignee } from "@/components/tasks/TaskAssignee";
 import type { Doc } from "@cvx/_generated/dataModel";
 
 type Task = Doc<"tasks">;
+
+const overviewDescriptionClass =
+  "mt-0.5 min-w-0 max-w-full truncate text-xs text-slate-500";
+
+function blockedState(task: Task, taskById?: Map<string, Task>) {
+  const blocker =
+    task.blockedByTaskId && taskById?.get(String(task.blockedByTaskId));
+  const blocked =
+    Boolean(blocker) &&
+    blocker!.status !== "done" &&
+    blocker!.status !== "cancelled";
+  return { blocked, blocker };
+}
 
 type Props = {
   task: Task;
   projectName?: string;
   assigneeName?: string;
   labels: string[];
+  /** Lookup for “blocked by” resolution (workspace tasks). */
+  taskById?: Map<string, Task>;
   /** Completes / toggles done state (checkbox only when `onOpen` is set). */
   onToggle?: () => void;
   /** Opens task detail / edit. When set, title and metadata open editor; checkbox uses `onToggle`. */
@@ -27,6 +45,7 @@ export function TaskRow({
   projectName,
   assigneeName,
   labels,
+  taskById,
   onToggle,
   onOpen,
   onDelete,
@@ -35,6 +54,7 @@ export function TaskRow({
   const done = task.status === "done";
   const split = Boolean(onOpen && onToggle);
   const subProgress = taskSubtaskProgress(task);
+  const { blocked } = blockedState(task, taskById);
 
   if (split) {
     return (
@@ -65,7 +85,7 @@ export function TaskRow({
           onClick={onOpen}
           className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 text-left sm:flex-row sm:items-center sm:justify-between sm:gap-4"
         >
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1 overflow-hidden sm:max-w-[min(100%,28rem)]">
             <div className="flex flex-wrap items-center gap-2">
               <p
                 className={cn(
@@ -73,7 +93,7 @@ export function TaskRow({
                   done && "line-through text-slate-500",
                 )}
               >
-                {task.title}
+                <MentionInlineText text={task.title} />
               </p>
               {subProgress ? (
                 <span
@@ -84,14 +104,27 @@ export function TaskRow({
                   {subProgress.done}/{subProgress.total}
                 </span>
               ) : null}
+              {blocked ? (
+                <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/80">
+                  Blocked
+                </span>
+              ) : null}
+              {task.recurrence ? (
+                <span
+                  className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/80"
+                  title="Repeating task"
+                >
+                  Repeats
+                </span>
+              ) : null}
             </div>
             {task.description ? (
-              <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">
-                {task.description}
+              <p className={overviewDescriptionClass} title={task.description}>
+                <MentionInlineText text={task.description} />
               </p>
             ) : null}
           </div>
-          <div className="flex flex-1 flex-wrap items-center gap-2 sm:justify-end">
+          <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 sm:justify-end">
             {projectName ? (
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
                 {projectName}
@@ -107,13 +140,16 @@ export function TaskRow({
             ))}
             <StatusBadge status={task.status} />
             <PriorityBadge priority={task.priority} />
-            <span className="text-xs text-slate-500">
+            <span
+              className={cn(
+                "text-xs",
+                task.dueDate ? taskDueDateTextClass(task) : "text-slate-500",
+              )}
+            >
               {task.dueDate ? formatShortDate(task.dueDate) : "No date"}
             </span>
             {assigneeName ? (
-              <span className="text-xs font-medium text-slate-600">
-                {assigneeName}
-              </span>
+              <TaskAssignee name={assigneeName} />
             ) : (
               <span className="text-xs text-slate-400">Unassigned</span>
             )}
@@ -156,7 +192,7 @@ export function TaskRow({
           ) : (
             <Circle className="h-5 w-5 shrink-0 text-slate-300" />
           )}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1 overflow-hidden sm:max-w-[min(100%,28rem)]">
             <div className="flex flex-wrap items-center gap-2">
               <p
                 className={cn(
@@ -164,7 +200,7 @@ export function TaskRow({
                   done && "line-through text-slate-500",
                 )}
               >
-                {task.title}
+                <MentionInlineText text={task.title} />
               </p>
               {subProgress ? (
                 <span
@@ -175,10 +211,23 @@ export function TaskRow({
                   {subProgress.done}/{subProgress.total}
                 </span>
               ) : null}
+              {blocked ? (
+                <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/80">
+                  Blocked
+                </span>
+              ) : null}
+              {task.recurrence ? (
+                <span
+                  className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/80"
+                  title="Repeating task"
+                >
+                  Repeats
+                </span>
+              ) : null}
             </div>
             {task.description ? (
-              <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">
-                {task.description}
+              <p className={overviewDescriptionClass} title={task.description}>
+                <MentionInlineText text={task.description} />
               </p>
             ) : null}
           </div>
@@ -199,13 +248,16 @@ export function TaskRow({
           ))}
           <StatusBadge status={task.status} />
           <PriorityBadge priority={task.priority} />
-          <span className="text-xs text-slate-500">
+          <span
+            className={cn(
+              "text-xs",
+              task.dueDate ? taskDueDateTextClass(task) : "text-slate-500",
+            )}
+          >
             {task.dueDate ? formatShortDate(task.dueDate) : "No date"}
           </span>
           {assigneeName ? (
-            <span className="text-xs font-medium text-slate-600">
-              {assigneeName}
-            </span>
+            <TaskAssignee name={assigneeName} />
           ) : (
             <span className="text-xs text-slate-400">Unassigned</span>
           )}

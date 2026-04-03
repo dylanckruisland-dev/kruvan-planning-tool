@@ -17,6 +17,11 @@ import { useWorkspaceDisplay } from "@/hooks/useWorkspaceDisplay";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { cn } from "@/lib/cn";
 import { searchParamsForPath } from "@/lib/route-search";
+import {
+  projectDetailDefaultSearch,
+  projectsListSearch,
+  tasksPageSearch,
+} from "@/lib/router-search-defaults";
 import { htmlToPlainText } from "@/lib/note-html";
 import { readRecentRoutes, recentRouteLabel } from "@/lib/recent-routes";
 
@@ -58,7 +63,7 @@ function RecentPaletteLink({
       <Link
         to="/projects/$projectId"
         params={{ projectId: m[1] }}
-        search={{ tab: "overview", taskView: "list" }}
+        search={{ ...projectDetailDefaultSearch }}
         onClick={onClose}
         className="flex items-center gap-2 px-3 py-2 text-sm text-slate-800 transition hover:bg-slate-50"
       >
@@ -376,7 +381,7 @@ export function CommandPalette({ open, onClose, onQuickAdd }: Props) {
                         <Link
                           to="/projects/$projectId"
                           params={{ projectId: String(p._id) }}
-                          search={{ tab: "overview", taskView: "list" }}
+                          search={{ ...projectDetailDefaultSearch }}
                           onClick={onClose}
                           className={cn(
                             "flex items-center gap-2 px-3 py-2 text-sm transition hover:bg-slate-50",
@@ -401,7 +406,11 @@ export function CommandPalette({ open, onClose, onQuickAdd }: Props) {
                       <li key={String(t._id)}>
                         <Link
                           to="/tasks"
-                          search={{ task: String(t._id), taskView: undefined }}
+                          search={{
+                            ...tasksPageSearch,
+                            task: String(t._id),
+                            taskView: undefined,
+                          }}
                           onClick={onClose}
                           className="flex items-center gap-2 px-3 py-2 text-sm transition hover:bg-slate-50"
                         >
@@ -490,6 +499,7 @@ export function CommandPalette({ open, onClose, onQuickAdd }: Props) {
                         <Link
                           to="/projects"
                           search={{
+                            ...projectsListSearch,
                             project: undefined,
                             folder: String(f._id),
                           }}

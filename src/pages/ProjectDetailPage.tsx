@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { getRouteApi, Link } from "@tanstack/react-router";
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import { ContentPlanBoardCard } from "@/components/content/ContentPlanBoardCard";
@@ -13,7 +13,9 @@ import {
   type ProjectFormValues,
 } from "@/lib/project-form";
 import { ProjectTaskViews } from "@/components/tasks/ProjectTaskViews";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { SectionHeader } from "@/components/ui/SectionHeader";
+import { useTabTitle } from "@/hooks/useTabTitle";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { dateInputValueToTimestamp } from "@/lib/dates";
 import { isImageContentType } from "@/lib/content-plan";
@@ -21,9 +23,11 @@ import {
   noteCreatedRange,
   type NoteDatePreset,
 } from "@/lib/note-filters";
+import { parseTaskDueSort } from "@/lib/task-due-sort";
+import { projectsListSearch } from "@/lib/router-search-defaults";
 import { cn } from "@/lib/cn";
 import type { Doc, Id } from "@cvx/_generated/dataModel";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Copy } from "lucide-react";
 
 const routeApi = getRouteApi("/projects/$projectId");
 
@@ -35,8 +39,11 @@ const TABS = [
 ];
 
 export function ProjectDetailPage() {
+  const navigate = useNavigate();
   const { projectId } = routeApi.useParams();
-  const { tab: tabRaw, taskView: taskViewRaw } = routeApi.useSearch();
+  const { tab: tabRaw, taskView: taskViewRaw, dueSort: dueSortFromUrl } =
+    routeApi.useSearch();
+  const dueSortParsed = parseTaskDueSort(dueSortFromUrl);
   const tab = tabRaw ?? "overview";
   const taskView: "list" | "board" =
     taskViewRaw === "board" ? "board" : "list";
@@ -44,6 +51,7 @@ export function ProjectDetailPage() {
   const pid = projectId as Id<"projects">;
 
   const project = useQuery(api.projects.get, { projectId: pid });
+  useTabTitle(project?.name?.trim() ? project.name : "Project");
   const folders = useQuery(
     api.folders.listByWorkspace,
     workspaceId ? { workspaceId } : "skip",
@@ -133,8 +141,15 @@ export function ProjectDetailPage() {
     workspaceId ? { workspaceId } : "skip",
   );
 
+  const projectActivities = useQuery(
+    api.projectActivity.listForProject,
+    tab === "overview" ? { projectId: pid, limit: 30 } : "skip",
+  );
+
   const updateProject = useMutation(api.projects.update);
+  const duplicateProject = useMutation(api.projects.duplicate);
   const [saveBusy, setSaveBusy] = useState(false);
+  const [duplicateBusy, setDuplicateBusy] = useState(false);
   const [noteModalOpen, setNoteModalOpen] = useState(false);
   const [noteBeingEdited, setNoteBeingEdited] = useState<Doc<"notes"> | null>(
     null,
@@ -192,6 +207,20 @@ export function ProjectDetailPage() {
     }
   }
 
+  async function onDuplicateProject() {
+    setDuplicateBusy(true);
+    try {
+      const newId = await duplicateProject({ projectId: pid });
+      void navigate({
+        to: "/projects/$projectId",
+        params: { projectId: String(newId) },
+        search: { tab: "overview", taskView: "list", dueSort: undefined },
+      });
+    } finally {
+      setDuplicateBusy(false);
+    }
+  }
+
   if (!workspaceId || project === undefined) {
     return <div className="h-40 animate-pulse rounded-2xl bg-slate-200" />;
   }
@@ -203,7 +232,7 @@ export function ProjectDetailPage() {
         <div className="mt-4">
           <Link
             to="/projects"
-            search={{ project: undefined, folder: undefined }}
+            search={{ ...projectsListSearch }}
             className="font-medium text-accent hover:text-accent-strong hover:underline"
           >
             Back to projects
@@ -222,7 +251,7 @@ export function ProjectDetailPage() {
         >
           <Link
             to="/projects"
-            search={{ project: undefined, folder: undefined }}
+            search={{ ...projectsListSearch }}
             className="font-medium transition hover:text-slate-800"
           >
             Projects
@@ -235,9 +264,14 @@ export function ProjectDetailPage() {
         <SectionHeader
           title={project.name}
           description={
-            project.description?.trim()
-              ? project.description
-              : "Project workspace — edit details on the Overview tab."
+            project.description?.trim() ? (
+              <MentionInlineText
+                text={project.description}
+                className="text-sm text-slate-500"
+              />
+            ) : (
+              "Project workspace — edit details on the Overview tab."
+            )
           }
         />
       </div>
@@ -253,6 +287,7 @@ export function ProjectDetailPage() {
               search={{
                 tab: t.id,
                 taskView: t.id === "tasks" ? taskView : "list",
+                dueSort: dueSortParsed,
               }}
               className={cn(
                 "rounded-t-lg px-4 py-2 text-sm font-medium transition",
@@ -268,32 +303,78 @@ export function ProjectDetailPage() {
       </div>
 
       {tab === "overview" && formInitial ? (
-        <div className="max-w-2xl rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900">
-            Project details
-          </h3>
-          <p className="mt-1 text-xs text-slate-500">
-            Update the name, description, status, priority, due date, folder,
-            tags, and progress.
-          </p>
-          <div className="mt-5">
-            <ProjectForm
-              initial={formInitial}
-              workspaceId={workspaceId ?? undefined}
-              tags={(overview?.tags ?? []).map((t) => ({
-                _id: String(t._id),
-                name: t.name,
-              }))}
-              folders={(folders ?? []).map((f) => ({
-                _id: String(f._id),
-                name: f.name,
-              }))}
-              onSubmit={onSaveProject}
-              submitLabel="Save changes"
-              busy={saveBusy}
-              showProgress
-              idPrefix="edit-project"
-            />
+        <div className="max-w-2xl space-y-6">
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Project details
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Update the name, description, status, priority, due date,
+                  folder, tags, and progress.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void onDuplicateProject()}
+                disabled={duplicateBusy}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Copy className="h-3.5 w-3.5" aria-hidden />
+                {duplicateBusy ? "Duplicating…" : "Duplicate project"}
+              </button>
+            </div>
+            <div className="mt-5">
+              <ProjectForm
+                initial={formInitial}
+                workspaceId={workspaceId ?? undefined}
+                tags={(overview?.tags ?? []).map((t) => ({
+                  _id: String(t._id),
+                  name: t.name,
+                }))}
+                folders={(folders ?? []).map((f) => ({
+                  _id: String(f._id),
+                  name: f.name,
+                }))}
+                onSubmit={onSaveProject}
+                submitLabel="Save changes"
+                busy={saveBusy}
+                showProgress
+                idPrefix="edit-project"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-900">Activity</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Recent changes on this project.
+            </p>
+            {projectActivities === undefined ? (
+              <div className="mt-4 h-24 animate-pulse rounded-xl bg-slate-100" />
+            ) : projectActivities.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">No activity yet.</p>
+            ) : (
+              <ul className="mt-4 divide-y divide-slate-100">
+                {projectActivities.map((a) => (
+                  <li key={a._id} className="py-3 first:pt-0 last:pb-0">
+                    <p className="text-sm text-slate-800">
+                      <span className="font-medium text-slate-900">
+                        {a.actorName}
+                      </span>{" "}
+                      <MentionInlineText
+                        text={a.summary}
+                        className="inline text-inherit"
+                      />
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      {new Date(a.createdAt).toLocaleString()}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       ) : null}
@@ -390,6 +471,7 @@ export function ProjectDetailPage() {
                 <NoteCard
                   key={n._id}
                   note={n}
+                  projectName={project?.name}
                   selected={
                     noteModalOpen &&
                     noteBeingEdited !== null &&

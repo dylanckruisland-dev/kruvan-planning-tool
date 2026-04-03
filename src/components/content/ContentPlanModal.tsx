@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import { useToast } from "@/contexts/ToastContext";
+import { MentionTextField } from "@/components/mentions/MentionTextField";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import {
   PLATFORM_PRESETS,
@@ -533,10 +534,12 @@ export function ContentPlanModal({
               >
                 Title <span className="text-rose-600">*</span>
               </label>
-              <input
+              <MentionTextField
                 id="cp-title"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onValueChange={setTitle}
+                workspaceId={workspaceId}
+                mentionEnabled={open}
                 className={inputClass}
                 placeholder="Hook or working title"
                 required
@@ -574,10 +577,13 @@ export function ContentPlanModal({
               >
                 Notes / caption ideas
               </label>
-              <textarea
+              <MentionTextField
+                multiline
                 id="cp-notes"
                 value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                onValueChange={setNotes}
+                workspaceId={workspaceId}
+                mentionEnabled={open}
                 rows={4}
                 placeholder="Outline, script beats, hashtags…"
                 className={cn(inputClass, "resize-none")}

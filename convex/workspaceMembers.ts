@@ -1,9 +1,97 @@
 import { mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import {
   requireWorkspaceAccess,
   requireWorkspaceMemberAccess,
 } from "./authHelpers";
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/** Idempotent: one assignee row per workspace user, matched by email when present. */
+export async function ensureWorkspaceAssigneeForUser(
+  ctx: MutationCtx,
+  workspaceId: Id<"workspaces">,
+  userId: Id<"users">,
+) {
+  const user = await ctx.db.get(userId);
+  if (!user) return;
+  const name =
+    user.name?.trim() ||
+    (user.email ? user.email.split("@")[0] : null) ||
+    "Member";
+  const email = user.email?.trim();
+  const existing = await ctx.db
+    .query("workspaceMembers")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+  if (email) {
+    const dup = existing.find(
+      (e) => e.email && normalizeEmail(e.email) === normalizeEmail(email),
+    );
+    if (dup) return;
+  } else {
+    const dup = existing.find(
+      (e) =>
+        !e.email &&
+        e.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    );
+    if (dup) return;
+  }
+  await ctx.db.insert("workspaceMembers", {
+    workspaceId,
+    name,
+    email: email || undefined,
+  });
+}
+
+export async function removeWorkspaceAssigneeForUser(
+  ctx: MutationCtx,
+  workspaceId: Id<"workspaces">,
+  userId: Id<"users">,
+) {
+  const user = await ctx.db.get(userId);
+  if (!user) return;
+  const rows = await ctx.db
+    .query("workspaceMembers")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+
+  let row = null as (typeof rows)[number] | null;
+  if (user?.email) {
+    const email = normalizeEmail(user.email);
+    row =
+      rows.find(
+        (r) => r.email && normalizeEmail(r.email) === email,
+      ) ?? null;
+  } else if (user) {
+    const name =
+      user.name?.trim() ||
+      (user.email ? user.email.split("@")[0] : null) ||
+      "Member";
+    row =
+      rows.find(
+        (r) =>
+          !r.email &&
+          r.name.trim().toLowerCase() === name.trim().toLowerCase(),
+      ) ?? null;
+  }
+  if (!row) return;
+
+  const tasks = await ctx.db
+    .query("tasks")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+  for (const t of tasks) {
+    if (t.assigneeMemberId === row._id) {
+      await ctx.db.patch(t._id, { assigneeMemberId: undefined });
+    }
+  }
+  await ctx.db.delete(row._id);
+}
 
 export const listByWorkspace = query({
   args: { workspaceId: v.id("workspaces") },
@@ -71,5 +159,25 @@ export const remove = mutation({
       }
     }
     await ctx.db.delete(memberId);
+  },
+});
+
+/** Backfill assignee rows for owner + all collaborators (safe to run multiple times). */
+export const syncCollaboratorsToAssignees = mutation({
+  args: { workspaceId: v.id("workspaces") },
+  handler: async (ctx, { workspaceId }) => {
+    await requireWorkspaceAccess(ctx, workspaceId);
+    const workspace = await ctx.db.get(workspaceId);
+    if (!workspace) return;
+    if (workspace.ownerId) {
+      await ensureWorkspaceAssigneeForUser(ctx, workspaceId, workspace.ownerId);
+    }
+    const memberships = await ctx.db
+      .query("workspaceUserMemberships")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+      .collect();
+    for (const m of memberships) {
+      await ensureWorkspaceAssigneeForUser(ctx, workspaceId, m.userId);
+    }
   },
 });

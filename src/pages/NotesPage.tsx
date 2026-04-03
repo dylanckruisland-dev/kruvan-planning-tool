@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { SectionHeader } from "@/components/ui/SectionHeader";
+import { useTabTitle } from "@/hooks/useTabTitle";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { cn } from "@/lib/cn";
 import type { Id } from "@cvx/_generated/dataModel";
@@ -35,25 +36,13 @@ export function NotesPage() {
     }
   }, [noteFromUrl]);
   const notes = useQuery(
-    api.notes.listByWorkspace,
+    api.notes.listByWorkspaceWithProjects,
     workspaceId
       ? { workspaceId, search: search || undefined }
       : "skip",
   );
-  const projects = useQuery(
-    api.projects.listByWorkspace,
-    workspaceId ? { workspaceId } : "skip",
-  );
   const updateNote = useMutation(api.notes.update);
   const removeNote = useMutation(api.notes.remove);
-
-  const projectName = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const p of projects ?? []) {
-      m.set(String(p._id), p.name);
-    }
-    return m;
-  }, [projects]);
 
   const sortedNotes = useMemo(() => {
     if (!notes) return [];
@@ -67,6 +56,15 @@ export function NotesPage() {
 
   const active =
     sortedNotes.find((n) => String(n._id) === selected) ?? sortedNotes[0];
+
+  const notesTabTitle = useMemo(() => {
+    if (!noteFromUrl) return "Notes";
+    if (active && String(active._id) === noteFromUrl) {
+      return active.title?.trim() || "Note";
+    }
+    return "Note";
+  }, [noteFromUrl, active]);
+  useTabTitle(notesTabTitle);
 
   async function confirmDeleteNote() {
     if (!deleteNoteId || !notes) return;
@@ -169,11 +167,7 @@ export function NotesPage() {
               <NoteCard
                 key={n._id}
                 note={n}
-                projectName={
-                  n.projectId
-                    ? projectName.get(String(n.projectId))
-                    : undefined
-                }
+                projectName={n.project?.name}
                 selected={
                   selected === String(n._id) ||
                   (!selected && sortedNotes[0]?._id === n._id)

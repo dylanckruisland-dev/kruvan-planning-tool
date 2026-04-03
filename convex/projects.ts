@@ -1,6 +1,32 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { requireProjectAccess, requireWorkspaceAccess } from "./authHelpers";
+import type { Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
+import {
+  assertFolderInWorkspace,
+  requireAuthUserId,
+  requireProjectAccess,
+  requireWorkspaceAccess,
+} from "./authHelpers";
+import { insertProjectActivity } from "./projectActivity";
+
+async function nextSortOrderForTaskStatus(
+  ctx: MutationCtx,
+  workspaceId: Id<"workspaces">,
+  taskStatus: "todo" | "in_progress" | "done" | "cancelled",
+) {
+  const rows = await ctx.db
+    .query("tasks")
+    .withIndex("by_workspace", (q) => q.eq("workspaceId", workspaceId))
+    .collect();
+  let max = -1;
+  for (const t of rows) {
+    if (t.status !== taskStatus) continue;
+    const o = t.sortOrder ?? 0;
+    if (o > max) max = o;
+  }
+  return max + 1;
+}
 
 const priority = v.union(
   v.literal("low"),
@@ -108,6 +134,9 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     await requireWorkspaceAccess(ctx, args.workspaceId);
+    if (args.folderId) {
+      await assertFolderInWorkspace(ctx, args.folderId, args.workspaceId);
+    }
     return await ctx.db.insert("projects", args);
   },
 });
@@ -125,7 +154,7 @@ export const update = mutation({
     tagIds: v.optional(v.array(v.id("tags"))),
   },
   handler: async (ctx, { projectId, ...rest }) => {
-    await requireProjectAccess(ctx, projectId);
+    const project = await requireProjectAccess(ctx, projectId);
     const patch: Record<string, unknown> = {};
     if (rest.name !== undefined) patch.name = rest.name;
     if (rest.description !== undefined) patch.description = rest.description;
@@ -136,10 +165,123 @@ export const update = mutation({
     }
     if (rest.progress !== undefined) patch.progress = rest.progress;
     if (rest.folderId !== undefined) {
+      if (rest.folderId !== null) {
+        await assertFolderInWorkspace(ctx, rest.folderId, project.workspaceId);
+      }
       patch.folderId = rest.folderId ?? undefined;
     }
     if (rest.tagIds !== undefined) patch.tagIds = rest.tagIds;
     await ctx.db.patch(projectId, patch);
+    const userId = await requireAuthUserId(ctx);
+    const summaryParts: string[] = [];
+    if (rest.name !== undefined) summaryParts.push(`name → ${rest.name}`);
+    if (rest.status !== undefined) summaryParts.push(`status → ${rest.status}`);
+    if (rest.progress !== undefined) summaryParts.push(`progress → ${rest.progress}%`);
+    if (summaryParts.length > 0) {
+      await insertProjectActivity(ctx, {
+        workspaceId: project.workspaceId,
+        projectId,
+        actorUserId: userId,
+        kind: "project_updated",
+        summary: summaryParts.join(", "),
+      });
+    }
+  },
+});
+
+export const duplicate = mutation({
+  args: {
+    projectId: v.id("projects"),
+    name: v.optional(v.string()),
+  },
+  handler: async (ctx, { projectId, name }) => {
+    const src = await requireProjectAccess(ctx, projectId);
+    const userId = await requireAuthUserId(ctx);
+    const now = Date.now();
+    const newName = name?.trim() || `Copy of ${src.name}`;
+    const newProjectId = await ctx.db.insert("projects", {
+      workspaceId: src.workspaceId,
+      folderId: src.folderId,
+      name: newName,
+      description: src.description,
+      status: src.status,
+      priority: src.priority,
+      dueDate: src.dueDate,
+      progress: 0,
+      tagIds: src.tagIds,
+    });
+
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .collect();
+    const idMap = new Map<string, Id<"tasks">>();
+    for (const t of tasks) {
+      const sortOrder = await nextSortOrderForTaskStatus(
+        ctx,
+        t.workspaceId,
+        t.status,
+      );
+      const newId = await ctx.db.insert("tasks", {
+        workspaceId: t.workspaceId,
+        projectId: newProjectId,
+        title: t.title,
+        description: t.description,
+        dueDate: t.dueDate,
+        scheduledStart: t.scheduledStart,
+        scheduledEnd: t.scheduledEnd,
+        status: t.status,
+        priority: t.priority,
+        assigneeId: t.assigneeId,
+        assigneeMemberId: t.assigneeMemberId,
+        labelIds: t.labelIds,
+        sortOrder,
+        subtasks: t.subtasks,
+        recurrence: t.recurrence,
+        completedAt: t.completedAt,
+      });
+      idMap.set(String(t._id), newId);
+    }
+    for (const t of tasks) {
+      if (!t.blockedByTaskId) continue;
+      const newB = idMap.get(String(t.blockedByTaskId));
+      const newT = idMap.get(String(t._id));
+      if (newB && newT) {
+        await ctx.db.patch(newT, { blockedByTaskId: newB });
+      }
+    }
+
+    const plans = await ctx.db
+      .query("contentPlans")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .collect();
+    for (const c of plans) {
+      await ctx.db.insert("contentPlans", {
+        workspaceId: c.workspaceId,
+        projectId: newProjectId,
+        title: c.title,
+        notes: c.notes,
+        contentFormat: c.contentFormat,
+        platforms: c.platforms,
+        customPlatforms: c.customPlatforms,
+        status: c.status,
+        scheduledFor: c.scheduledFor,
+        publishedAt: c.publishedAt,
+        attachments: c.attachments,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    await insertProjectActivity(ctx, {
+      workspaceId: src.workspaceId,
+      projectId: newProjectId,
+      actorUserId: userId,
+      kind: "project_duplicated",
+      summary: `Duplicated from “${src.name}”`,
+    });
+
+    return newProjectId;
   },
 });
 

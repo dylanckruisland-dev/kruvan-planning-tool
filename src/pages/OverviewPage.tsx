@@ -6,12 +6,20 @@ import { api } from "@cvx/_generated/api";
 import { ProjectCard } from "@/components/projects/ProjectCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SectionHeader } from "@/components/ui/SectionHeader";
-import { useShellActions } from "@/contexts/ShellActionsContext";
+import { useShellActions } from "@/contexts/useShellActions";
+import { useTabTitle } from "@/hooks/useTabTitle";
 import { useWorkspaceDisplay } from "@/hooks/useWorkspaceDisplay";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import { addDays, startOfDay } from "@/lib/dates";
+import {
+  projectsListSearch,
+  tasksPageSearch,
+} from "@/lib/router-search-defaults";
+import { cn } from "@/lib/cn";
+import { taskDueDateTextClass } from "@/lib/due-urgency";
 
 export function OverviewPage() {
+  useTabTitle("Overview");
   const { openQuickAdd } = useShellActions();
   const { workspaceId, workspace } = useWorkspace();
   const { formatTime, formatShortDate } = useWorkspaceDisplay();
@@ -155,11 +163,22 @@ export function OverviewPage() {
               <li key={t._id}>
                 <Link
                   to="/tasks"
-                  search={{ task: String(t._id), taskView: undefined }}
+                  search={{
+                    ...tasksPageSearch,
+                    task: String(t._id),
+                    taskView: undefined,
+                  }}
                   className="block rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md"
                 >
                   <p className="font-semibold text-slate-900">{t.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p
+                    className={cn(
+                      "mt-1 text-xs",
+                      t.dueDate
+                        ? taskDueDateTextClass(t)
+                        : "text-slate-500",
+                    )}
+                  >
                     {t.dueDate
                       ? `Due ${formatShortDate(t.dueDate)}`
                       : "No due date"}
@@ -175,7 +194,7 @@ export function OverviewPage() {
           </ul>
           <Link
             to="/tasks"
-            search={{ task: undefined, taskView: undefined }}
+            search={{ ...tasksPageSearch }}
             className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-accent hover:text-accent-strong"
           >
             All tasks
@@ -259,7 +278,7 @@ export function OverviewPage() {
           </h2>
           <Link
             to="/projects"
-            search={{ project: undefined, folder: undefined }}
+            search={{ ...projectsListSearch }}
             className="text-xs font-semibold text-accent hover:text-accent-strong"
           >
             View all
@@ -274,7 +293,7 @@ export function OverviewPage() {
             action={
               <Link
                 to="/projects"
-                search={{ project: undefined, folder: undefined }}
+                search={{ ...projectsListSearch }}
                 className="inline-flex rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
               >
                 Go to projects
@@ -296,7 +315,7 @@ export function OverviewPage() {
 
       <button
         type="button"
-        onClick={openQuickAdd}
+        onClick={() => openQuickAdd()}
         className="w-full rounded-2xl border border-dashed border-slate-200 bg-white/70 p-5 text-left transition hover:border-slate-300 hover:bg-white"
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

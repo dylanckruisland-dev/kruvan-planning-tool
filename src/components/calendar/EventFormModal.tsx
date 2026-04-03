@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { tasksPageSearch } from "@/lib/router-search-defaults";
 import { Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
@@ -8,6 +9,7 @@ import {
   timestampToDatetimeLocal,
 } from "@/lib/dates";
 import type { Id } from "@cvx/_generated/dataModel";
+import { MentionTextField } from "@/components/mentions/MentionTextField";
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none input-focus-accent";
@@ -177,7 +179,11 @@ export function EventFormModal({
             Linked task:{" "}
             <Link
               to="/tasks"
-              search={{ task: String(linkedTaskId), taskView: "list" }}
+              search={{
+                ...tasksPageSearch,
+                task: String(linkedTaskId),
+                taskView: "list",
+              }}
               className="font-medium text-accent underline-offset-2 hover:text-accent-strong hover:underline"
               onClick={onClose}
             >
@@ -194,10 +200,11 @@ export function EventFormModal({
             >
               Title <span className="text-rose-600">*</span>
             </label>
-            <input
+            <MentionTextField
               id="ev-title"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onValueChange={setTitle}
+              workspaceId={workspaceId}
               placeholder="Meeting, focus block…"
               className={inputClass}
               required
@@ -211,10 +218,12 @@ export function EventFormModal({
             >
               Description
             </label>
-            <textarea
+            <MentionTextField
+              multiline
               id="ev-desc"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onValueChange={setDescription}
+              workspaceId={workspaceId}
               rows={2}
               placeholder="Optional details"
               className={`${inputClass} resize-none`}

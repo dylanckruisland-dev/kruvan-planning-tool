@@ -1,23 +1,26 @@
+import {
+  projectDetailDefaultSearch,
+  projectsListSearch,
+  tasksPageSearch,
+} from "@/lib/router-search-defaults";
+
 /** Default search for routes with `validateSearch` (required on `<Link>`). */
 export type RouteSearch =
-  | { project: string | undefined; folder: string | undefined }
-  | { task: string | undefined; taskView: "list" | "board" | undefined }
+  | typeof projectsListSearch
+  | typeof tasksPageSearch
   | { event: string | undefined }
   | { note: string | undefined }
   | { content: string | undefined; view?: "calendar" }
-  | {
-      tab: "overview" | "tasks" | "notes" | "content";
-      taskView: "list" | "board";
-    };
+  | typeof projectDetailDefaultSearch;
 
 export function searchParamsForPath(path: string): RouteSearch | undefined {
   switch (path) {
     case "/projects":
-      return { project: undefined, folder: undefined };
+      return { ...projectsListSearch };
     case "/projects/$projectId":
-      return { tab: "overview", taskView: "list" };
+      return { ...projectDetailDefaultSearch };
     case "/tasks":
-      return { task: undefined, taskView: undefined };
+      return { ...tasksPageSearch };
     case "/agenda":
       return { event: undefined };
     case "/notes":

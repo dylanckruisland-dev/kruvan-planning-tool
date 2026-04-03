@@ -13,6 +13,7 @@ import { ProjectsPage } from "@/pages/ProjectsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { TasksPage } from "@/pages/TasksPage";
 import { ContentPage } from "@/pages/ContentPage";
+import { DirectMessagesPage } from "@/pages/DirectMessagesPage";
 
 const rootRoute = createRootRoute({
   component: AppShell,
@@ -36,6 +37,13 @@ const projectsRoute = createRoute({
       typeof raw.folder === "string" && raw.folder.length > 0
         ? raw.folder
         : undefined,
+    sort:
+      raw.sort === "status" ||
+      raw.sort === "priority" ||
+      raw.sort === "due"
+        ? raw.sort
+        : undefined,
+    dir: raw.dir === "asc" || raw.dir === "desc" ? raw.dir : undefined,
   }),
   component: ProjectsPage,
 });
@@ -55,6 +63,7 @@ const projectDetailRoute = createRoute({
       raw.taskView === "board" || raw.taskView === "list"
         ? raw.taskView
         : "list",
+    dueSort: raw.dueSort === "asc" || raw.dueSort === "desc" ? raw.dueSort : undefined,
   }),
   component: ProjectDetailPage,
 });
@@ -71,6 +80,7 @@ const tasksRoute = createRoute({
       raw.taskView === "board" || raw.taskView === "list"
         ? raw.taskView
         : undefined,
+    dueSort: raw.dueSort === "asc" || raw.dueSort === "desc" ? raw.dueSort : undefined,
   }),
   component: TasksPage,
 });
@@ -119,6 +129,22 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
+const messagesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/messages",
+  validateSearch: (raw: Record<string, unknown>) => ({
+    conversation:
+      typeof raw.conversation === "string" && raw.conversation.length > 0
+        ? raw.conversation
+        : undefined,
+    team:
+      typeof raw.team === "string" && raw.team.length > 0
+        ? raw.team
+        : undefined,
+  }),
+  component: DirectMessagesPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   projectsRoute,
@@ -127,6 +153,7 @@ const routeTree = rootRoute.addChildren([
   agendaRoute,
   notesRoute,
   contentRoute,
+  messagesRoute,
   settingsRoute,
 ]);
 

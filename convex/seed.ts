@@ -132,6 +132,7 @@ export const seedDemo = mutation({
     const t1 = await ctx.db.insert("tasks", {
       workspaceId,
       projectId: p1,
+      sortOrder: 0,
       title: "Finalize sidebar IA",
       description: "Map IA to new information architecture doc.",
       dueDate: now + 1 * day,
@@ -162,6 +163,7 @@ export const seedDemo = mutation({
     await ctx.db.insert("tasks", {
       workspaceId,
       projectId: p1,
+      sortOrder: 0,
       title: "Ship dark mode tokens",
       dueDate: now + 3 * day,
       status: "todo",
@@ -172,6 +174,7 @@ export const seedDemo = mutation({
     await ctx.db.insert("tasks", {
       workspaceId,
       projectId: p2,
+      sortOrder: 1,
       title: "Dry-run cutover checklist",
       dueDate: now + 2 * day,
       status: "todo",
@@ -182,6 +185,7 @@ export const seedDemo = mutation({
     await ctx.db.insert("tasks", {
       workspaceId,
       projectId: p2,
+      sortOrder: 2,
       title: "Executive readout deck",
       dueDate: now + 4 * day,
       status: "todo",
@@ -191,6 +195,7 @@ export const seedDemo = mutation({
     });
     await ctx.db.insert("tasks", {
       workspaceId,
+      sortOrder: 3,
       title: "Weekly planning block",
       description: "Personal focus time — no meetings.",
       dueDate: now + 6 * day,

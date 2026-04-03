@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { X } from "lucide-react";
+import { Mic, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@cvx/_generated/api";
@@ -8,13 +8,18 @@ import {
   dateInputValueToTimestamp,
   datetimeLocalToTimestamp,
   timestampToDatetimeLocal,
+  timestampToDateInputValue,
 } from "@/lib/dates";
+import { createSubtaskId } from "@/lib/task-form";
+import type { VoiceParseResult } from "@/lib/quick-add-voice";
+import { QuickAddVoicePanel } from "@/components/quick-add/QuickAddVoicePanel";
 import { cn } from "@/lib/cn";
 import { TASK_STATUS_LABEL, type TaskStatus } from "@/lib/task-status";
 import {
   normalizeSubtasksForSave,
   type TaskSubtaskForm,
 } from "@/lib/task-form";
+import { MentionTextField } from "@/components/mentions/MentionTextField";
 import { TaskSubtasksField } from "@/components/tasks/TaskSubtasksField";
 import type { Doc, Id } from "@cvx/_generated/dataModel";
 
@@ -33,8 +38,6 @@ type TaskFormState = {
   assigneeMemberId: string;
   labelIds: string[];
   subtasks: TaskSubtaskForm[];
-  schedStart: string;
-  schedEnd: string;
 };
 
 type NoteFormState = {
@@ -63,8 +66,6 @@ function defaultTaskForm(): TaskFormState {
     assigneeMemberId: "",
     labelIds: [],
     subtasks: [],
-    schedStart: "",
-    schedEnd: "",
   };
 }
 
@@ -91,9 +92,15 @@ function defaultEventForm(): EventFormState {
 type Props = {
   open: boolean;
   onClose: () => void;
+  /** When true, opening the modal shows the voice fill strip (e.g. top bar mic). */
+  startVoiceOnOpen?: boolean;
 };
 
-export function QuickAddModal({ open, onClose }: Props) {
+export function QuickAddModal({
+  open,
+  onClose,
+  startVoiceOnOpen = false,
+}: Props) {
   const { workspaceId } = useWorkspace();
   const createTask = useMutation(api.tasks.create);
   const createNote = useMutation(api.notes.create);
@@ -122,6 +129,10 @@ export function QuickAddModal({ open, onClose }: Props) {
   const [eventForm, setEventForm] = useState<EventFormState>(defaultEventForm);
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showVoicePanel, setShowVoicePanel] = useState(false);
+  /** After top-bar mic: show speech-only step first; then full form. */
+  const [voiceGateComplete, setVoiceGateComplete] = useState(true);
+  const [voiceWarnings, setVoiceWarnings] = useState<string[]>([]);
 
   const sortedProjects = useMemo(() => {
     const list = projects ?? [];
@@ -151,7 +162,55 @@ export function QuickAddModal({ open, onClose }: Props) {
     setNoteForm(defaultNoteForm());
     setEventForm(defaultEventForm());
     setSubmitError(null);
-  }, [open]);
+    setVoiceWarnings([]);
+    setVoiceGateComplete(!startVoiceOnOpen);
+    setShowVoicePanel(false);
+  }, [open, startVoiceOnOpen]);
+
+  function applyVoiceResult(r: VoiceParseResult) {
+    setVoiceGateComplete(true);
+    setShowVoicePanel(false);
+    setVoiceWarnings(r.warnings);
+    setKind(r.kind);
+    if (r.kind === "task") {
+      setTaskForm({
+        ...defaultTaskForm(),
+        title: r.title,
+        description: r.body,
+        dueDate: timestampToDateInputValue(r.dueDate ?? undefined),
+        projectId: r.projectId ? String(r.projectId) : "",
+        status: r.status ?? "todo",
+        priority: r.priority ?? "medium",
+        subtasks: r.subtaskTitles.map((title) => ({
+          id: createSubtaskId(),
+          title,
+          done: false,
+        })),
+        assigneeMemberId: r.assigneeMemberId
+          ? String(r.assigneeMemberId)
+          : "",
+        labelIds: r.labelIds.map(String),
+      });
+    } else if (r.kind === "note") {
+      setNoteForm({
+        ...defaultNoteForm(),
+        title: r.title,
+        body: r.body,
+        projectId: r.projectId ? String(r.projectId) : "",
+        folderId: r.folderId ? String(r.folderId) : "",
+      });
+    } else {
+      const ev = defaultEventForm();
+      setEventForm({
+        ...ev,
+        title: r.title,
+        description: r.body,
+        projectId: r.projectId ? String(r.projectId) : "",
+        startLocal: r.eventStartLocal ?? ev.startLocal,
+        endLocal: r.eventEndLocal ?? ev.endLocal,
+      });
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -179,26 +238,6 @@ export function QuickAddModal({ open, onClose }: Props) {
 
     if (kind === "task") {
       if (!taskForm.title.trim()) return;
-      const schedS = taskForm.schedStart.trim();
-      const schedE = taskForm.schedEnd.trim();
-      if ((schedS || schedE) && !(schedS && schedE)) {
-        setSubmitError(
-          "For an agenda time block, set both start and end, or leave both empty.",
-        );
-        return;
-      }
-      let scheduledStart: number | undefined;
-      let scheduledEnd: number | undefined;
-      if (schedS && schedE) {
-        const a = datetimeLocalToTimestamp(schedS);
-        const b = datetimeLocalToTimestamp(schedE);
-        if (Number.isNaN(a) || Number.isNaN(b) || b <= a) {
-          setSubmitError("Invalid agenda start/end time.");
-          return;
-        }
-        scheduledStart = a;
-        scheduledEnd = b;
-      }
       const subtasks = normalizeSubtasksForSave(taskForm.subtasks);
       setBusy(true);
       try {
@@ -209,8 +248,6 @@ export function QuickAddModal({ open, onClose }: Props) {
           status: taskForm.status,
           priority: taskForm.priority,
           dueDate: dateInputValueToTimestamp(taskForm.dueDate),
-          scheduledStart,
-          scheduledEnd,
           projectId: taskForm.projectId
             ? (taskForm.projectId as Id<"projects">)
             : undefined,
@@ -300,6 +337,8 @@ export function QuickAddModal({ open, onClose }: Props) {
     event: "Event",
   };
 
+  const voiceFirstOnly = Boolean(startVoiceOnOpen && !voiceGateComplete);
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/20 p-4 pt-[8vh] backdrop-blur-sm">
       <div className="flex max-h-[min(90vh,760px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xl">
@@ -308,8 +347,20 @@ export function QuickAddModal({ open, onClose }: Props) {
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Quick add</h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                Create a task, note, or agenda event in one place.
+                {voiceFirstOnly
+                  ? "Spreek eerst in (NL of EN). Daarna zie je het volledige formulier."
+                  : "Create a task, note, or agenda event in one place."}
               </p>
+              {!voiceFirstOnly && !showVoicePanel ? (
+                <button
+                  type="button"
+                  onClick={() => setShowVoicePanel(true)}
+                  className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium text-accent hover:text-accent-strong"
+                >
+                  <Mic className="h-3.5 w-3.5" aria-hidden />
+                  Fill with voice
+                </button>
+              ) : null}
             </div>
             <button
               type="button"
@@ -320,26 +371,50 @@ export function QuickAddModal({ open, onClose }: Props) {
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {(["task", "note", "event"] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setKind(k)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-medium transition",
-                  kind === k
-                    ? "bg-slate-900 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200",
-                )}
-              >
-                {kindLabels[k]}
-              </button>
-            ))}
-          </div>
+          {!voiceFirstOnly ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {(["task", "note", "event"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setKind(k)}
+                  className={cn(
+                    "rounded-lg px-3 py-1.5 text-xs font-medium transition",
+                    kind === k
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                  )}
+                >
+                  {kindLabels[k]}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {voiceFirstOnly ? (
+            <QuickAddVoicePanel
+              expanded
+              variant="gate"
+              primaryActionLabel="Continue to form"
+              onParsed={applyVoiceResult}
+            />
+          ) : (
+            <>
+              {showVoicePanel ? (
+                <QuickAddVoicePanel
+                  expanded
+                  onParsed={applyVoiceResult}
+                />
+              ) : null}
+              {voiceWarnings.length > 0 ? (
+            <ul className="mb-4 list-inside list-disc rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+              {voiceWarnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          ) : null}
           {submitError ? (
             <p className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
               {submitError}
@@ -352,29 +427,61 @@ export function QuickAddModal({ open, onClose }: Props) {
                 <label className="text-xs font-medium text-slate-600">
                   Title <span className="text-rose-600">*</span>
                 </label>
-                <input
-                  value={taskForm.title}
-                  onChange={(e) =>
-                    setTaskForm((f) => ({ ...f, title: e.target.value }))
-                  }
-                  className={inputClass}
-                  placeholder="What needs to be done?"
-                  autoFocus
-                />
+                {workspaceId ? (
+                  <MentionTextField
+                    value={taskForm.title}
+                    onValueChange={(title) =>
+                      setTaskForm((f) => ({ ...f, title }))
+                    }
+                    workspaceId={workspaceId}
+                    mentionEnabled={open}
+                    className={inputClass}
+                    placeholder="What needs to be done?"
+                    autoFocus
+                  />
+                ) : (
+                  <input
+                    value={taskForm.title}
+                    onChange={(e) =>
+                      setTaskForm((f) => ({ ...f, title: e.target.value }))
+                    }
+                    className={inputClass}
+                    placeholder="What needs to be done?"
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-600">
                   Description
                 </label>
-                <textarea
-                  value={taskForm.description}
-                  onChange={(e) =>
-                    setTaskForm((f) => ({ ...f, description: e.target.value }))
-                  }
-                  rows={2}
-                  className={cn(inputClass, "resize-none")}
-                  placeholder="Optional details"
-                />
+                {workspaceId ? (
+                  <MentionTextField
+                    multiline
+                    value={taskForm.description}
+                    onValueChange={(description) =>
+                      setTaskForm((f) => ({ ...f, description }))
+                    }
+                    workspaceId={workspaceId}
+                    mentionEnabled={open}
+                    rows={2}
+                    className={cn(inputClass, "resize-none")}
+                    placeholder="Optional details"
+                  />
+                ) : (
+                  <textarea
+                    value={taskForm.description}
+                    onChange={(e) =>
+                      setTaskForm((f) => ({
+                        ...f,
+                        description: e.target.value,
+                      }))
+                    }
+                    rows={2}
+                    className={cn(inputClass, "resize-none")}
+                    placeholder="Optional details"
+                  />
+                )}
               </div>
               <TaskSubtasksField
                 subtasks={taskForm.subtasks}
@@ -493,41 +600,6 @@ export function QuickAddModal({ open, onClose }: Props) {
                   ))}
                 </select>
               </div>
-              <div>
-                <p className="text-xs font-medium text-slate-600">
-                  Agenda time block (optional)
-                </p>
-                <p className="mt-0.5 text-[11px] text-slate-500">
-                  Shows on your calendar when both start and end are set.
-                </p>
-                <div className="mt-2 grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="text-xs text-slate-500">Start</label>
-                    <input
-                      type="datetime-local"
-                      value={taskForm.schedStart}
-                      onChange={(e) =>
-                        setTaskForm((f) => ({
-                          ...f,
-                          schedStart: e.target.value,
-                        }))
-                      }
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-500">End</label>
-                    <input
-                      type="datetime-local"
-                      value={taskForm.schedEnd}
-                      onChange={(e) =>
-                        setTaskForm((f) => ({ ...f, schedEnd: e.target.value }))
-                      }
-                      className={inputClass}
-                    />
-                  </div>
-                </div>
-              </div>
               {tags && tags.length > 0 ? (
                 <div>
                   <p className="text-xs font-medium text-slate-600">Tags</p>
@@ -563,27 +635,56 @@ export function QuickAddModal({ open, onClose }: Props) {
                 <label className="text-xs font-medium text-slate-600">
                   Title <span className="text-rose-600">*</span>
                 </label>
-                <input
-                  value={noteForm.title}
-                  onChange={(e) =>
-                    setNoteForm((f) => ({ ...f, title: e.target.value }))
-                  }
-                  className={inputClass}
-                  placeholder="Note title"
-                  autoFocus
-                />
+                {workspaceId ? (
+                  <MentionTextField
+                    value={noteForm.title}
+                    onValueChange={(title) =>
+                      setNoteForm((f) => ({ ...f, title }))
+                    }
+                    workspaceId={workspaceId}
+                    mentionEnabled={open}
+                    className={inputClass}
+                    placeholder="Note title"
+                    autoFocus
+                  />
+                ) : (
+                  <input
+                    value={noteForm.title}
+                    onChange={(e) =>
+                      setNoteForm((f) => ({ ...f, title: e.target.value }))
+                    }
+                    className={inputClass}
+                    placeholder="Note title"
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-600">Body</label>
-                <textarea
-                  value={noteForm.body}
-                  onChange={(e) =>
-                    setNoteForm((f) => ({ ...f, body: e.target.value }))
-                  }
-                  rows={6}
-                  className={cn(inputClass, "resize-none")}
-                  placeholder="Write your note…"
-                />
+                {workspaceId ? (
+                  <MentionTextField
+                    multiline
+                    value={noteForm.body}
+                    onValueChange={(body) =>
+                      setNoteForm((f) => ({ ...f, body }))
+                    }
+                    workspaceId={workspaceId}
+                    mentionEnabled={open}
+                    rows={6}
+                    className={cn(inputClass, "resize-none")}
+                    placeholder="Write your note…"
+                  />
+                ) : (
+                  <textarea
+                    value={noteForm.body}
+                    onChange={(e) =>
+                      setNoteForm((f) => ({ ...f, body: e.target.value }))
+                    }
+                    rows={6}
+                    className={cn(inputClass, "resize-none")}
+                    placeholder="Write your note…"
+                  />
+                )}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -634,32 +735,61 @@ export function QuickAddModal({ open, onClose }: Props) {
                 <label className="text-xs font-medium text-slate-600">
                   Title <span className="text-rose-600">*</span>
                 </label>
-                <input
-                  value={eventForm.title}
-                  onChange={(e) =>
-                    setEventForm((f) => ({ ...f, title: e.target.value }))
-                  }
-                  className={inputClass}
-                  placeholder="Meeting, focus block…"
-                  autoFocus
-                />
+                {workspaceId ? (
+                  <MentionTextField
+                    value={eventForm.title}
+                    onValueChange={(title) =>
+                      setEventForm((f) => ({ ...f, title }))
+                    }
+                    workspaceId={workspaceId}
+                    mentionEnabled={open}
+                    className={inputClass}
+                    placeholder="Meeting, focus block…"
+                    autoFocus
+                  />
+                ) : (
+                  <input
+                    value={eventForm.title}
+                    onChange={(e) =>
+                      setEventForm((f) => ({ ...f, title: e.target.value }))
+                    }
+                    className={inputClass}
+                    placeholder="Meeting, focus block…"
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-600">
                   Description
                 </label>
-                <textarea
-                  value={eventForm.description}
-                  onChange={(e) =>
-                    setEventForm((f) => ({
-                      ...f,
-                      description: e.target.value,
-                    }))
-                  }
-                  rows={2}
-                  className={cn(inputClass, "resize-none")}
-                  placeholder="Optional details"
-                />
+                {workspaceId ? (
+                  <MentionTextField
+                    multiline
+                    value={eventForm.description}
+                    onValueChange={(description) =>
+                      setEventForm((f) => ({ ...f, description }))
+                    }
+                    workspaceId={workspaceId}
+                    mentionEnabled={open}
+                    rows={2}
+                    className={cn(inputClass, "resize-none")}
+                    placeholder="Optional details"
+                  />
+                ) : (
+                  <textarea
+                    value={eventForm.description}
+                    onChange={(e) =>
+                      setEventForm((f) => ({
+                        ...f,
+                        description: e.target.value,
+                      }))
+                    }
+                    rows={2}
+                    className={cn(inputClass, "resize-none")}
+                    placeholder="Optional details"
+                  />
+                )}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
@@ -715,6 +845,8 @@ export function QuickAddModal({ open, onClose }: Props) {
               </div>
             </div>
           ) : null}
+            </>
+          )}
         </div>
 
         <div className="shrink-0 border-t border-slate-100 px-5 py-4">
@@ -726,14 +858,16 @@ export function QuickAddModal({ open, onClose }: Props) {
             >
               Cancel
             </button>
-            <button
-              type="button"
-              disabled={busy || !canSubmit}
-              onClick={() => void submit()}
-              className="rounded-xl bg-accent-solid px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-accent-solid-hover disabled:opacity-40"
-            >
-              {kind === "event" ? "Add to agenda" : "Create"}
-            </button>
+            {voiceFirstOnly ? null : (
+              <button
+                type="button"
+                disabled={busy || !canSubmit}
+                onClick={() => void submit()}
+                className="rounded-xl bg-accent-solid px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-accent-solid-hover disabled:opacity-40"
+              >
+                {kind === "event" ? "Add to agenda" : "Create"}
+              </button>
+            )}
           </div>
         </div>
       </div>

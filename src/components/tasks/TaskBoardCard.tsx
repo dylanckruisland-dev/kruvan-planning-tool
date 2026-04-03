@@ -1,43 +1,73 @@
-import { useDraggable } from "@dnd-kit/core";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { CheckCircle2, Circle, GripVertical, ListChecks } from "lucide-react";
 import { PriorityBadge } from "@/components/ui/PriorityBadge";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { formatShortDate } from "@/lib/dates";
+import { taskDueDateTextClass } from "@/lib/due-urgency";
 import { cn } from "@/lib/cn";
 import { taskSubtaskProgress } from "@/lib/task-form";
 import type { Doc } from "@cvx/_generated/dataModel";
+import { TaskAssignee } from "@/components/tasks/TaskAssignee";
 
 type Task = Doc<"tasks">;
+
+function blockedState(task: Task, taskById?: Map<string, Task>) {
+  const blocker =
+    task.blockedByTaskId && taskById?.get(String(task.blockedByTaskId));
+  const blocked =
+    Boolean(blocker) &&
+    blocker!.status !== "done" &&
+    blocker!.status !== "cancelled";
+  return { blocked };
+}
 
 type Props = {
   task: Task;
   labels: string[];
+  assigneeName?: string;
+  taskById?: Map<string, Task>;
   onToggle?: () => void;
   onOpen?: () => void;
 };
 
-export function TaskBoardCard({ task, labels, onToggle, onOpen }: Props) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({
-      id: String(task._id),
-    });
+export function TaskBoardCard({
+  task,
+  labels,
+  assigneeName,
+  taskById,
+  onToggle,
+  onOpen,
+}: Props) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: String(task._id),
+  });
 
-  const style = transform
-    ? { transform: CSS.Translate.toString(transform) }
-    : undefined;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   const done = task.status === "done";
   const split = Boolean(onOpen && onToggle);
   const subProgress = taskSubtaskProgress(task);
+  const { blocked } = blockedState(task, taskById);
 
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={cn(
-        "rounded-xl border border-slate-200/90 bg-white p-3 shadow-sm ring-1 ring-slate-100/80 transition",
-        isDragging && "z-10 cursor-grabbing opacity-90 shadow-lg ring-2 ring-accent-dnd",
+        "rounded-xl border border-slate-200/90 bg-white p-3 shadow-sm ring-1 ring-slate-100/80 transition-[box-shadow,transform,opacity]",
+        isDragging && "z-20 cursor-grabbing opacity-80 shadow-lg ring-2 ring-accent-dnd",
         !isDragging && "hover:border-slate-300",
       )}
     >
@@ -65,7 +95,7 @@ export function TaskBoardCard({ task, labels, onToggle, onOpen }: Props) {
                     done && "text-slate-500 line-through",
                   )}
                 >
-                  {task.title}
+                  <MentionInlineText text={task.title} />
                 </p>
                 {subProgress ? (
                   <span
@@ -76,11 +106,26 @@ export function TaskBoardCard({ task, labels, onToggle, onOpen }: Props) {
                     {subProgress.done}/{subProgress.total}
                   </span>
                 ) : null}
+                {blocked ? (
+                  <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/80">
+                    Blocked
+                  </span>
+                ) : null}
+                {task.recurrence ? (
+                  <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/80">
+                    Repeats
+                  </span>
+                ) : null}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <StatusBadge status={task.status} />
                 <PriorityBadge priority={task.priority} />
-                <span className="text-[11px] text-slate-500">
+                <span
+                  className={cn(
+                    "text-[11px]",
+                    task.dueDate ? taskDueDateTextClass(task) : "text-slate-500",
+                  )}
+                >
                   {task.dueDate ? formatShortDate(task.dueDate) : "—"}
                 </span>
               </div>
@@ -94,6 +139,11 @@ export function TaskBoardCard({ task, labels, onToggle, onOpen }: Props) {
                       {l}
                     </span>
                   ))}
+                </div>
+              ) : null}
+              {assigneeName ? (
+                <div className="mt-2 flex justify-end">
+                  <TaskAssignee name={assigneeName} />
                 </div>
               ) : null}
             </button>
@@ -112,7 +162,7 @@ export function TaskBoardCard({ task, labels, onToggle, onOpen }: Props) {
                       done && "text-slate-500 line-through",
                     )}
                   >
-                    {task.title}
+                    <MentionInlineText text={task.title} />
                   </p>
                   {subProgress ? (
                     <span
@@ -123,12 +173,27 @@ export function TaskBoardCard({ task, labels, onToggle, onOpen }: Props) {
                       {subProgress.done}/{subProgress.total}
                     </span>
                   ) : null}
+                  {blocked ? (
+                    <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/80">
+                      Blocked
+                    </span>
+                  ) : null}
+                  {task.recurrence ? (
+                    <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/80">
+                      Repeats
+                    </span>
+                  ) : null}
                 </div>
               </button>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <StatusBadge status={task.status} />
                 <PriorityBadge priority={task.priority} />
-                <span className="text-[11px] text-slate-500">
+                <span
+                  className={cn(
+                    "text-[11px]",
+                    task.dueDate ? taskDueDateTextClass(task) : "text-slate-500",
+                  )}
+                >
                   {task.dueDate ? formatShortDate(task.dueDate) : "—"}
                 </span>
               </div>
@@ -142,6 +207,11 @@ export function TaskBoardCard({ task, labels, onToggle, onOpen }: Props) {
                       {l}
                     </span>
                   ))}
+                </div>
+              ) : null}
+              {assigneeName ? (
+                <div className="mt-2 flex justify-end">
+                  <TaskAssignee name={assigneeName} />
                 </div>
               ) : null}
             </>

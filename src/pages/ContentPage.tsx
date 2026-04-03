@@ -10,6 +10,7 @@ import { PlanAttachmentHint } from "@/components/content/PlanAttachmentHint";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { SectionHeader } from "@/components/ui/SectionHeader";
+import { useTabTitle } from "@/hooks/useTabTitle";
 import { useWorkspace } from "@/hooks/useWorkspace";
 import {
   CONTENT_PLATFORM_LABEL,
@@ -146,12 +147,13 @@ export function ContentPage() {
   useEffect(() => {
     if (!contentFromUrl || !items) return;
     const found = items.find((i) => String(i._id) === contentFromUrl);
-    if (found) {
+    if (!found) return;
+    queueMicrotask(() => {
       setModalPlan((prev) =>
         prev && String(prev._id) === String(found._id) ? prev : found,
       );
       setModalOpen(true);
-    }
+    });
   }, [contentFromUrl, items]);
 
   function closeModal() {
@@ -208,6 +210,13 @@ export function ContentPage() {
   }
 
   const listLoading = items === undefined;
+
+  const contentTabTitle = useMemo(() => {
+    if (!contentFromUrl || !items) return "Content";
+    const found = items.find((i) => String(i._id) === contentFromUrl);
+    return found?.title?.trim() ? found.title : "Content";
+  }, [contentFromUrl, items]);
+  useTabTitle(contentTabTitle);
 
   if (!workspaceId) {
     return <div className="h-40 animate-pulse rounded-2xl bg-slate-200" />;

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import { ProjectTaskBoard } from "@/components/tasks/ProjectTaskBoard";
@@ -7,9 +7,16 @@ import { ProjectTaskListByStatus } from "@/components/tasks/ProjectTaskListBySta
 import { TaskEditModal } from "@/components/tasks/TaskEditModal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { TaskDueSortToggle } from "@/components/ui/TaskDueSortToggle";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { useToast } from "@/contexts/ToastContext";
+import { useTabTitle } from "@/hooks/useTabTitle";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { tasksPageSearch } from "@/lib/router-search-defaults";
+import {
+  type TaskDueSortDir,
+  parseTaskDueSort,
+} from "@/lib/task-due-sort";
 import type { TaskStatus } from "@/lib/task-status";
 import { cn } from "@/lib/cn";
 import type { Id } from "@cvx/_generated/dataModel";
@@ -22,9 +29,15 @@ type TaskModalState =
 export function TasksPage() {
   const { toast } = useToast();
   const { workspaceId, workspace } = useWorkspace();
-  const { task: taskFromUrl, taskView: taskViewRaw } = useSearch({
+  const navigate = useNavigate({ from: "/tasks" });
+  const {
+    task: taskFromUrl,
+    taskView: taskViewRaw,
+    dueSort: dueSortFromUrl,
+  } = useSearch({
     from: "/tasks",
   });
+  const dueSortParsed = parseTaskDueSort(dueSortFromUrl);
   const taskView =
     taskViewRaw === "board" || taskViewRaw === "list"
       ? taskViewRaw
@@ -83,6 +96,23 @@ export function TasksPage() {
   }, [allUsers]);
 
   const list = useMemo(() => tasks ?? [], [tasks]);
+
+  const tasksTabTitle = useMemo(() => {
+    if (!taskFromUrl) return "Tasks";
+    const row = list.find((t) => String(t._id) === taskFromUrl);
+    if (row?.title?.trim()) return row.title;
+    return "Task";
+  }, [taskFromUrl, list]);
+  useTabTitle(tasksTabTitle);
+
+  function setDueSort(value: TaskDueSortDir | undefined) {
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        dueSort: value,
+      }),
+    });
+  }
 
   const editingTask = useMemo(
     () =>
@@ -165,42 +195,59 @@ export function TasksPage() {
       />
 
       <div className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="inline-flex rounded-xl border border-slate-200/90 bg-slate-50/80 p-1 shadow-sm">
-            <Link
-              to="/tasks"
-              search={{ task: taskSearch, taskView: "list" }}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
-                taskView === "list"
-                  ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
-                  : "text-slate-600 hover:text-slate-900",
-              )}
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <TaskDueSortToggle
+            value={dueSortParsed}
+            onChange={setDueSort}
+            className="w-full min-w-0 sm:w-auto"
+          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <div className="inline-flex rounded-xl border border-slate-200/90 bg-slate-50/80 p-1 shadow-sm">
+              <Link
+                to="/tasks"
+                search={{
+                  ...tasksPageSearch,
+                  task: taskSearch,
+                  taskView: "list",
+                  dueSort: dueSortParsed,
+                }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
+                  taskView === "list"
+                    ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
+                    : "text-slate-600 hover:text-slate-900",
+                )}
+              >
+                <LayoutList className="h-3.5 w-3.5" />
+                By status
+              </Link>
+              <Link
+                to="/tasks"
+                search={{
+                  ...tasksPageSearch,
+                  task: taskSearch,
+                  taskView: "board",
+                  dueSort: dueSortParsed,
+                }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
+                  taskView === "board"
+                    ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
+                    : "text-slate-600 hover:text-slate-900",
+                )}
+              >
+                <Columns3 className="h-3.5 w-3.5" />
+                Board
+              </Link>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTaskModal({ kind: "create", status: "todo" })}
+              className="shrink-0 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
             >
-              <LayoutList className="h-3.5 w-3.5" />
-              By status
-            </Link>
-            <Link
-              to="/tasks"
-              search={{ task: taskSearch, taskView: "board" }}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition",
-                taskView === "board"
-                  ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/80"
-                  : "text-slate-600 hover:text-slate-900",
-              )}
-            >
-              <Columns3 className="h-3.5 w-3.5" />
-              Board
-            </Link>
+              Add task
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setTaskModal({ kind: "create", status: "todo" })}
-            className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800"
-          >
-            Add task
-          </button>
         </div>
 
         {tasks.length === 0 ? (
@@ -222,8 +269,12 @@ export function TasksPage() {
           />
         ) : taskView === "board" ? (
           <ProjectTaskBoard
+            workspaceId={workspaceId}
             tasks={list}
+            dueSort={dueSortParsed}
             tagMap={tagMap}
+            memberName={memberName}
+            legacyUserName={legacyUserName}
             onToggleTask={onToggleTask}
             onOpenTask={(id) => setTaskModal({ kind: "edit", taskId: id })}
             onOpenCreateTask={(status) =>
@@ -232,7 +283,9 @@ export function TasksPage() {
           />
         ) : (
           <ProjectTaskListByStatus
+            workspaceId={workspaceId}
             tasks={list}
+            dueSort={dueSortParsed}
             memberName={memberName}
             legacyUserName={legacyUserName}
             tagMap={tagMap}

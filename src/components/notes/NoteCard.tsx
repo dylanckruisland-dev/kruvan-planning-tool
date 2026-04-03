@@ -1,6 +1,7 @@
 import { FileText, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatShortDate } from "@/lib/dates";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { htmlToPlainText } from "@/lib/note-html";
 import { noteCreatedAtMs } from "@/lib/note-filters";
 import type { Doc } from "@cvx/_generated/dataModel";
@@ -47,7 +48,7 @@ export function NoteCard({
           <div className="min-w-0 flex-1">
             <div className="flex w-full items-start justify-between gap-3">
               <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
-                {note.title}
+                <MentionInlineText text={note.title} />
               </p>
               <p className="shrink-0 text-right text-[11px] font-medium tabular-nums text-slate-500">
                 {formatShortDate(noteCreatedAtMs(note))}
@@ -59,7 +60,9 @@ export function NoteCard({
               </p>
             ) : null}
             <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-slate-600">
-              {htmlToPlainText(note.body) || "—"}
+              <MentionInlineText
+                text={htmlToPlainText(note.body) || "—"}
+              />
             </p>
           </div>
         </div>

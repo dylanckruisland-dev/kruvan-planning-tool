@@ -1,6 +1,30 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { requireAuthUserId, requireWorkspaceAccess } from "./authHelpers";
+import {
+  requireAuthUserId,
+  requireWorkspaceAccess,
+  requireWorkspaceAdminOrOwner,
+} from "./authHelpers";
+import { ensureWorkspaceAssigneeForUser } from "./workspaceMembers";
+
+/** Maximum workspaces a user may own (not counting memberships on others’ workspaces). */
+export const MAX_OWNED_WORKSPACES = 3;
+
+export const ownedWorkspaceStats = query({
+  args: v.object({}),
+  handler: async (ctx) => {
+    const userId = await requireAuthUserId(ctx);
+    const owned = await ctx.db
+      .query("workspaces")
+      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
+      .collect();
+    return {
+      ownedCount: owned.length,
+      maxOwned: MAX_OWNED_WORKSPACES,
+      canCreate: owned.length < MAX_OWNED_WORKSPACES,
+    };
+  },
+});
 
 export const list = query({
   args: v.object({}),
@@ -12,10 +36,23 @@ export const list = query({
       .collect();
     const ownedIds = new Set(owned.map((w) => w._id));
 
+    const membershipRows = await ctx.db
+      .query("workspaceUserMemberships")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    const shared: typeof owned = [];
+    for (const row of membershipRows) {
+      if (ownedIds.has(row.workspaceId)) continue;
+      const w = await ctx.db.get(row.workspaceId);
+      if (w) shared.push(w);
+    }
+    const sharedIds = new Set(shared.map((w) => w._id));
+
     // Legacy: no owner, or owner user doc removed (e.g. after auth migration) — show so user can open / claim via mutations.
     const extra: typeof owned = [];
     for (const w of await ctx.db.query("workspaces").collect()) {
-      if (ownedIds.has(w._id)) continue;
+      if (ownedIds.has(w._id) || sharedIds.has(w._id)) continue;
       if (w.ownerId === undefined) {
         extra.push(w);
         continue;
@@ -24,7 +61,7 @@ export const list = query({
         extra.push(w);
       }
     }
-    return [...owned, ...extra];
+    return [...owned, ...shared, ...extra];
   },
 });
 
@@ -36,6 +73,7 @@ const landingRouteValidator = v.union(
   v.literal("/content"),
   v.literal("/projects"),
   v.literal("/settings"),
+  v.literal("/messages"),
 );
 
 function slugifyBase(name: string): string {
@@ -54,6 +92,16 @@ export const create = mutation({
     const trimmed = name.trim();
     if (trimmed.length === 0) throw new Error("Name cannot be empty");
 
+    const alreadyOwned = await ctx.db
+      .query("workspaces")
+      .withIndex("by_owner", (q) => q.eq("ownerId", userId))
+      .collect();
+    if (alreadyOwned.length >= MAX_OWNED_WORKSPACES) {
+      throw new Error(
+        "You can create up to 3 workspaces per account. You can still join workspaces others invite you to.",
+      );
+    }
+
     let slug = `${slugifyBase(trimmed)}-${Date.now().toString(36)}`;
     for (let i = 0; i < 8; i++) {
       const existing = await ctx.db
@@ -70,6 +118,7 @@ export const create = mutation({
       ownerId: userId,
       accent: "#4f46e5",
     });
+    await ensureWorkspaceAssigneeForUser(ctx, workspaceId, userId);
     return { workspaceId };
   },
 });
@@ -106,7 +155,7 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const { workspaceId, ...rest } = args;
-    await requireWorkspaceAccess(ctx, workspaceId);
+    await requireWorkspaceAdminOrOwner(ctx, workspaceId);
     const existing = await ctx.db.get(workspaceId);
     if (!existing) throw new Error("Workspace not found");
 

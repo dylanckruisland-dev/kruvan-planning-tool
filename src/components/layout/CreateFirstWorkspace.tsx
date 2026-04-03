@@ -1,12 +1,15 @@
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { api } from "@cvx/_generated/api";
 
 export function CreateFirstWorkspace() {
   const create = useMutation(api.workspaces.create);
+  const stats = useQuery(api.workspaces.ownedWorkspaceStats);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const atLimit = stats !== undefined && !stats.canCreate;
 
   return (
     <div className="flex min-h-full flex-col items-center justify-center bg-[#f6f7f9] px-4">
@@ -16,6 +19,9 @@ export function CreateFirstWorkspace() {
         </h1>
         <p className="mt-2 text-sm text-slate-600">
           Choose a name for your planning space (e.g. your company or team).
+        </p>
+        <p className="mt-3 text-xs text-slate-500">
+          You can create up to 3 workspaces per account.
         </p>
         <form
           className="mt-6 space-y-4"
@@ -54,9 +60,16 @@ export function CreateFirstWorkspace() {
               {error}
             </p>
           )}
+          {atLimit ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              You can create up to 3 workspaces per account. Join a workspace
+              you&apos;ve been invited to from your email, or ask an owner to
+              invite you.
+            </p>
+          ) : null}
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || atLimit}
             className="w-full rounded-lg bg-[var(--workspace-accent,#4f46e5)] px-4 py-2.5 text-sm font-medium text-white hover:opacity-95 disabled:opacity-50"
           >
             {submitting ? "Creating…" : "Create workspace"}

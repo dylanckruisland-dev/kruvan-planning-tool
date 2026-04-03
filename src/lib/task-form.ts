@@ -43,9 +43,15 @@ export type TaskFormValues = {
   assigneeMemberId: string;
   labelIds: string[];
   subtasks: TaskSubtaskForm[];
+  recurrenceMode: "none" | "daily" | "weekly" | "monthly";
+  recurrenceInterval: number;
+  /** 0=Sun … 6=Sat for weekly recurrence */
+  recurrenceWeekday: number;
+  blockedByTaskId: string;
 };
 
 export function taskToFormValues(task: Doc<"tasks">): TaskFormValues {
+  const r = task.recurrence;
   return {
     title: task.title,
     description: task.description ?? "",
@@ -61,10 +67,31 @@ export function taskToFormValues(task: Doc<"tasks">): TaskFormValues {
       title: s.title,
       done: s.done,
     })),
+    recurrenceMode: r ? r.freq : "none",
+    recurrenceInterval: r?.interval ?? 1,
+    recurrenceWeekday: r?.anchor ?? 1,
+    blockedByTaskId: task.blockedByTaskId
+      ? String(task.blockedByTaskId)
+      : "",
   };
 }
 
 /** Defaults for the “new task” modal (per-column status from the board/list). */
+export function recurrencePayloadFromForm(values: TaskFormValues):
+  | { freq: "daily" | "weekly" | "monthly"; interval: number; anchor?: number }
+  | undefined {
+  if (values.recurrenceMode === "none") return undefined;
+  const interval = Math.max(1, Math.floor(values.recurrenceInterval) || 1);
+  if (values.recurrenceMode === "weekly") {
+    const wd = Math.min(6, Math.max(0, values.recurrenceWeekday));
+    return { freq: "weekly", interval, anchor: wd };
+  }
+  return {
+    freq: values.recurrenceMode,
+    interval,
+  };
+}
+
 export function emptyTaskFormValues(status: TaskStatus = "todo"): TaskFormValues {
   return {
     title: "",
@@ -75,5 +102,9 @@ export function emptyTaskFormValues(status: TaskStatus = "todo"): TaskFormValues
     assigneeMemberId: "",
     labelIds: [],
     subtasks: [],
+    recurrenceMode: "none",
+    recurrenceInterval: 1,
+    recurrenceWeekday: 1,
+    blockedByTaskId: "",
   };
 }

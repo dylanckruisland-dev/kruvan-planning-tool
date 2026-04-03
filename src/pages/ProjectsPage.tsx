@@ -1,30 +1,135 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import { ProjectFormModal } from "@/components/projects/ProjectFormModal";
 import { ProjectRow } from "@/components/projects/ProjectRow";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { FilterDropdown } from "@/components/ui/FilterDropdown";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { useToast } from "@/contexts/ToastContext";
+import { useTabTitle } from "@/hooks/useTabTitle";
 import { useWorkspace } from "@/hooks/useWorkspace";
-import type { Id } from "@cvx/_generated/dataModel";
-import { FolderKanban, X } from "lucide-react";
+import { cn } from "@/lib/cn";
+import type { Doc, Id } from "@cvx/_generated/dataModel";
+import { ChevronDown, ChevronUp, FolderKanban, X } from "lucide-react";
+
+type SortColumn = "status" | "priority" | "due";
+
+const STATUS_ORDER: Record<Doc<"projects">["status"], number> = {
+  planning: 0,
+  active: 1,
+  on_hold: 2,
+  done: 3,
+};
+
+const PRIORITY_ORDER: Record<Doc<"projects">["priority"], number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  urgent: 3,
+};
+
+function compareProjects(
+  a: Doc<"projects">,
+  b: Doc<"projects">,
+  column: SortColumn,
+  asc: boolean,
+): number {
+  let cmp = 0;
+  if (column === "status") {
+    cmp = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+  } else if (column === "priority") {
+    cmp = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
+  } else {
+    const aTime = a.dueDate;
+    const bTime = b.dueDate;
+    if (aTime == null && bTime == null) cmp = 0;
+    else if (aTime == null) cmp = 1;
+    else if (bTime == null) cmp = -1;
+    else cmp = aTime - bTime;
+  }
+  return asc ? cmp : -cmp;
+}
+
+function sortProjects(
+  rows: Doc<"projects">[],
+  column: SortColumn,
+  asc: boolean,
+): Doc<"projects">[] {
+  return [...rows].sort((a, b) => compareProjects(a, b, column, asc));
+}
+
+function SortColumnButton({
+  label,
+  column,
+  activeColumn,
+  direction,
+  onSort,
+  className,
+}: {
+  label: string;
+  column: SortColumn;
+  activeColumn: SortColumn;
+  direction: "asc" | "desc";
+  onSort: (col: SortColumn) => void;
+  className?: string;
+}) {
+  const active = activeColumn === column;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(column)}
+      className={cn(
+        "inline-flex items-center gap-0.5 rounded-md px-0.5 py-0.5 text-left transition",
+        active
+          ? "text-slate-900"
+          : "text-slate-400 hover:text-slate-600",
+        className,
+      )}
+      aria-pressed={active}
+      aria-label={`Sort by ${label}, ${active ? (direction === "asc" ? "ascending" : "descending") : "not active"}`}
+    >
+      <span>{label}</span>
+      {active ? (
+        direction === "asc" ? (
+          <ChevronUp className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden />
+        )
+      ) : (
+        <span className="inline-flex flex-col opacity-40" aria-hidden>
+          <ChevronUp className="h-2.5 w-2.5 -mb-1" />
+          <ChevronDown className="h-2.5 w-2.5" />
+        </span>
+      )}
+    </button>
+  );
+}
 
 export function ProjectsPage() {
+  useTabTitle("Projects");
   const { toast } = useToast();
   const { workspaceId } = useWorkspace();
-  const { project: projectFromUrl, folder: folderFromUrl } = useSearch({
+  const navigate = useNavigate({ from: "/projects" });
+  const {
+    project: projectFromUrl,
+    folder: folderFromUrl,
+    sort: sortFromUrl,
+    dir: dirFromUrl,
+  } = useSearch({
     from: "/projects",
   });
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<string>("all");
-  const [priority, setPriority] = useState<string>("all");
-  const [tagId, setTagId] = useState<string>("all");
-  const [due, setDue] = useState<string>("all");
+
+  const sortColumn: SortColumn =
+    sortFromUrl === "status" ||
+    sortFromUrl === "priority" ||
+    sortFromUrl === "due"
+      ? sortFromUrl
+      : "status";
+  const sortDir: "asc" | "desc" = dirFromUrl === "desc" ? "desc" : "asc";
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createModalKey, setCreateModalKey] = useState(0);
   const [deleteProject, setDeleteProject] = useState<{
@@ -43,22 +148,8 @@ export function ProjectsPage() {
         ? (folderFromUrl as Id<"folders">)
         : undefined,
       search: search.trim() || undefined,
-      status:
-        status === "all"
-          ? undefined
-          : (status as "planning" | "active" | "on_hold" | "done"),
-      priority:
-        priority === "all"
-          ? undefined
-          : (priority as "low" | "medium" | "high" | "urgent"),
-      tagId:
-        tagId === "all" ? undefined : (tagId as Id<"tags">),
-      dueFilter:
-        due === "all"
-          ? undefined
-          : (due as "no_date" | "overdue" | "next7"),
     };
-  }, [workspaceId, folderFromUrl, search, status, priority, tagId, due]);
+  }, [workspaceId, folderFromUrl, search]);
 
   const projects = useQuery(api.projects.listByWorkspace, queryArgs);
   const tasks = useQuery(
@@ -74,15 +165,14 @@ export function ProjectsPage() {
     workspaceId ? { workspaceId } : "skip",
   );
 
+  const sortedProjects = useMemo(() => {
+    if (!projects?.length) return projects ?? [];
+    return sortProjects(projects, sortColumn, sortDir === "asc");
+  }, [projects, sortColumn, sortDir]);
+
   const filtersActive = useMemo(() => {
-    return (
-      status !== "all" ||
-      priority !== "all" ||
-      tagId !== "all" ||
-      due !== "all" ||
-      search.trim().length > 0
-    );
-  }, [status, priority, tagId, due, search]);
+    return search.trim().length > 0;
+  }, [search]);
 
   useEffect(() => {
     if (!projectFromUrl || !projects) return;
@@ -133,12 +223,20 @@ export function ProjectsPage() {
     return m;
   }, [tasks]);
 
+  function handleSortClick(col: SortColumn) {
+    const nextDir =
+      sortColumn === col ? (sortDir === "asc" ? "desc" : "asc") : "asc";
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        sort: col,
+        dir: nextDir,
+      }),
+    });
+  }
+
   function clearFilters() {
     setSearch("");
-    setStatus("all");
-    setPriority("all");
-    setTagId("all");
-    setDue("all");
   }
 
   function openCreateModal() {
@@ -149,14 +247,6 @@ export function ProjectsPage() {
   if (!workspaceId || projects === undefined) {
     return <div className="h-40 animate-pulse rounded-2xl bg-slate-200" />;
   }
-
-  const tagOptions = [
-    { value: "all", label: "All tags" },
-    ...(tags ?? []).map((t) => ({
-      value: String(t._id),
-      label: t.name,
-    })),
-  ];
 
   async function confirmDeleteProject() {
     if (!deleteProject) return;
@@ -220,52 +310,36 @@ export function ProjectsPage() {
           placeholder="Search projects…"
           className="w-full max-w-none sm:max-w-md"
         />
-        <div className="flex flex-wrap items-center gap-2">
-          <FilterDropdown
-            label="Status"
-            value={status}
-            onChange={setStatus}
-            menuAlign="left"
-            options={[
-              { value: "all", label: "All statuses" },
-              { value: "planning", label: "Planning" },
-              { value: "active", label: "Active" },
-              { value: "on_hold", label: "On hold" },
-              { value: "done", label: "Done" },
-            ]}
-          />
-          <FilterDropdown
-            label="Priority"
-            value={priority}
-            onChange={setPriority}
-            menuAlign="left"
-            options={[
-              { value: "all", label: "All priorities" },
-              { value: "low", label: "Low" },
-              { value: "medium", label: "Medium" },
-              { value: "high", label: "High" },
-              { value: "urgent", label: "Urgent" },
-            ]}
-          />
-          <FilterDropdown
-            label="Tags"
-            value={tagId}
-            onChange={setTagId}
-            menuAlign="left"
-            options={tagOptions}
-          />
-          <FilterDropdown
-            label="Due"
-            value={due}
-            onChange={setDue}
-            menuAlign="left"
-            options={[
-              { value: "all", label: "All due dates" },
-              { value: "no_date", label: "No due date" },
-              { value: "overdue", label: "Overdue" },
-              { value: "next7", label: "Due in next 7 days" },
-            ]}
-          />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 md:hidden">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Sort
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <SortColumnButton
+              label="Status"
+              column="status"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onSort={handleSortClick}
+              className="text-[11px] font-semibold uppercase tracking-wide"
+            />
+            <SortColumnButton
+              label="Priority"
+              column="priority"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onSort={handleSortClick}
+              className="text-[11px] font-semibold uppercase tracking-wide"
+            />
+            <SortColumnButton
+              label="Due date"
+              column="due"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onSort={handleSortClick}
+              className="text-[11px] font-semibold uppercase tracking-wide"
+            />
+          </div>
           {filtersActive ? (
             <button
               type="button"
@@ -273,19 +347,19 @@ export function ProjectsPage() {
               className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
             >
               <X className="h-3.5 w-3.5" />
-              Clear filters
+              Clear search
             </button>
           ) : null}
         </div>
       </div>
 
-      {projects.length === 0 ? (
+      {sortedProjects.length === 0 ? (
         <EmptyState
           icon={FolderKanban}
           title={filtersActive ? "No projects match" : "No projects yet"}
           description={
             filtersActive
-              ? "Try changing filters or search, or clear filters to see all projects."
+              ? "Try changing search, or clear to see all projects."
               : "Create your first project to organize tasks, dates, and tags."
           }
           action={
@@ -304,16 +378,46 @@ export function ProjectsPage() {
         <>
           <div className="hidden border-b border-slate-100 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 md:grid md:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))_auto_2.5rem] md:gap-4 md:px-4">
             <span>Project</span>
-            <span>Status</span>
-            <span>Priority</span>
-            <span>Due</span>
+            <SortColumnButton
+              label="Status"
+              column="status"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onSort={handleSortClick}
+            />
+            <SortColumnButton
+              label="Priority"
+              column="priority"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onSort={handleSortClick}
+            />
+            <SortColumnButton
+              label="Due date"
+              column="due"
+              activeColumn={sortColumn}
+              direction={sortDir}
+              onSort={handleSortClick}
+            />
             <span>Tags</span>
-            <span className="text-right">Progress</span>
+            <span className="flex items-center justify-end gap-2 text-right">
+              <span>Progress</span>
+              {filtersActive ? (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium normal-case tracking-normal text-slate-600 shadow-sm transition hover:bg-slate-50"
+                >
+                  <X className="h-3 w-3" />
+                  Clear
+                </button>
+              ) : null}
+            </span>
             <span className="sr-only">Actions</span>
           </div>
 
           <div className="space-y-2">
-            {projects.map((p) => (
+            {sortedProjects.map((p) => (
               <ProjectRow
                 key={p._id}
                 project={p}

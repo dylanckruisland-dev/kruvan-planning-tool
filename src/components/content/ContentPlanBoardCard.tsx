@@ -5,6 +5,7 @@ import { formatShortDate, formatTime } from "@/lib/dates";
 import { CONTENT_PLATFORM_LABEL } from "@/lib/content-plan";
 import { cn } from "@/lib/cn";
 import type { Doc } from "@cvx/_generated/dataModel";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { PlanAttachmentHint } from "@/components/content/PlanAttachmentHint";
 
 type Props = {
@@ -61,7 +62,9 @@ export function ContentPlanBoardCard({
           onClick={onOpen}
           className="min-w-0 flex-1 rounded-lg text-left transition hover:bg-slate-50/80"
         >
-          <p className="text-sm font-medium text-slate-900">{plan.title}</p>
+          <p className="text-sm font-medium text-slate-900">
+            <MentionInlineText text={plan.title} />
+          </p>
           {plan.contentFormat ? (
             <p className="mt-0.5 text-[10px] font-medium text-slate-600">
               {plan.contentFormat}
@@ -69,7 +72,7 @@ export function ContentPlanBoardCard({
           ) : null}
           {plan.notes ? (
             <p className="mt-1 line-clamp-2 text-[11px] text-slate-500">
-              {plan.notes}
+              <MentionInlineText text={plan.notes} />
             </p>
           ) : null}
           <PlanAttachmentHint plan={plan} imageUrl={imageUrl} />

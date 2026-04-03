@@ -9,19 +9,13 @@ import {
 } from "@/components/calendar/agenda-dnd-ids";
 import {
   DraggableDueTaskChip,
+  type AgendaCalendarBlock,
   type AgendaDueTask,
 } from "@/components/calendar/CalendarPanel";
 import { useWorkspaceDisplay } from "@/hooks/useWorkspaceDisplay";
+import { MentionInlineText } from "@/components/mentions/MentionInlineText";
 import { cn } from "@/lib/cn";
 import { addDays, formatShortDate, startOfDay } from "@/lib/dates";
-
-type Block = {
-  id: string;
-  title: string;
-  start: number;
-  end: number;
-  meta?: string;
-};
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -30,7 +24,7 @@ const MAX_VISIBLE_IN_CELL = 3;
 
 type Props = {
   anchor: Date;
-  blocks: Block[];
+  blocks: AgendaCalendarBlock[];
   dueTasks?: AgendaDueTask[];
   onDayClick?: (day: Date) => void;
   onBlockClick?: (blockId: string) => void;
@@ -42,7 +36,7 @@ type Props = {
 type DayDetailState = {
   day: Date;
   tasks: AgendaDueTask[];
-  events: Block[];
+  events: AgendaCalendarBlock[];
 };
 
 function DraggableMonthEventBlock({
@@ -50,10 +44,24 @@ function DraggableMonthEventBlock({
   onBlockClick,
   getBlockDragId = agendaEventDragId,
 }: {
-  block: Block;
+  block: AgendaCalendarBlock;
   onBlockClick?: (blockId: string) => void;
   getBlockDragId?: (blockId: string) => string;
 }) {
+  if (block.readOnly) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onBlockClick?.(block.id);
+        }}
+        className="w-full cursor-default truncate rounded border border-slate-300/80 bg-slate-100 px-1 py-0.5 text-left text-[10px] font-medium text-slate-800"
+      >
+        <MentionInlineText text={block.title} />
+      </button>
+    );
+  }
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: getBlockDragId(block.id),
@@ -77,7 +85,7 @@ function DraggableMonthEventBlock({
         isDragging ? "cursor-grabbing opacity-40" : "cursor-grab",
       )}
     >
-      {block.title}
+      <MentionInlineText text={block.title} />
     </button>
   );
 }
@@ -87,11 +95,30 @@ function DraggableModalEventRow({
   onPick,
   getBlockDragId = agendaEventDragId,
 }: {
-  block: Block;
+  block: AgendaCalendarBlock;
   onPick: () => void;
   getBlockDragId?: (blockId: string) => string;
 }) {
   const { formatTime } = useWorkspaceDisplay();
+  if (block.readOnly) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick();
+        }}
+        className="w-full cursor-default rounded-xl border border-slate-300 bg-slate-100 px-3 py-2 text-left text-sm font-medium text-slate-800"
+      >
+        <span className="block">
+          <MentionInlineText text={block.title} />
+        </span>
+        <span className="mt-1 text-xs text-slate-600">
+          {formatTime(block.start)} – {formatTime(block.end)}
+        </span>
+      </button>
+    );
+  }
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: getBlockDragId(block.id),
@@ -115,7 +142,9 @@ function DraggableModalEventRow({
         isDragging ? "cursor-grabbing opacity-40" : "cursor-grab",
       )}
     >
-      <span className="block">{block.title}</span>
+      <span className="block">
+        <MentionInlineText text={block.title} />
+      </span>
       <span className="mt-1 text-xs text-accent-ink-muted">
         {formatTime(block.start)} – {formatTime(block.end)}
       </span>
@@ -137,7 +166,7 @@ function MonthGridCell({
   d: Date;
   month: number;
   dueTasks: AgendaDueTask[];
-  blocks: Block[];
+  blocks: AgendaCalendarBlock[];
   onDayClick?: (day: Date) => void;
   onDueTaskClick?: (taskId: string) => void;
   onBlockClick?: (blockId: string) => void;

@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import {
+  assertProjectInWorkspace,
   requireAuthUserId,
   requireContentPlanAccess,
   requireWorkspaceAccess,
@@ -168,6 +169,9 @@ export const create = mutation({
     if (!title) throw new Error("Title is required");
     const attachments =
       args.attachments?.length ? args.attachments : undefined;
+    if (args.projectId) {
+      await assertProjectInWorkspace(ctx, args.projectId, args.workspaceId);
+    }
     const customNorm = normalizeCustomPlatforms(args.customPlatforms);
     const platforms: typeof args.platforms = args.platforms.length
       ? args.platforms
@@ -207,7 +211,7 @@ export const update = mutation({
     projectId: v.optional(v.union(v.id("projects"), v.null())),
   },
   handler: async (ctx, { contentPlanId, ...rest }) => {
-    await requireContentPlanAccess(ctx, contentPlanId);
+    const doc = await requireContentPlanAccess(ctx, contentPlanId);
     const patch: Record<string, unknown> = { updatedAt: Date.now() };
     if (rest.title !== undefined) {
       const t = rest.title.trim();
@@ -225,12 +229,11 @@ export const update = mutation({
           : rest.contentFormat.trim() || undefined;
     }
     if (rest.platforms !== undefined || rest.customPlatforms !== undefined) {
-      const doc = await ctx.db.get(contentPlanId);
-      const preset = rest.platforms ?? doc?.platforms ?? [];
+      const preset = rest.platforms ?? doc.platforms ?? [];
       const customRaw =
         rest.customPlatforms !== undefined
           ? rest.customPlatforms
-          : doc?.customPlatforms;
+          : doc.customPlatforms;
       const customNorm = normalizeCustomPlatforms(customRaw ?? undefined);
       let nextPreset = [...preset];
       if (!nextPreset.length && !customNorm?.length) {
@@ -241,6 +244,9 @@ export const update = mutation({
     }
     if (rest.status !== undefined) patch.status = rest.status;
     if (rest.projectId !== undefined) {
+      if (rest.projectId !== null) {
+        await assertProjectInWorkspace(ctx, rest.projectId, doc.workspaceId);
+      }
       patch.projectId = rest.projectId ?? undefined;
     }
     if (rest.scheduledFor !== undefined) {

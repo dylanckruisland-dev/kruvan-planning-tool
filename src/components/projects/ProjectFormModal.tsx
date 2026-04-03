@@ -9,6 +9,7 @@ import {
   type ProjectFormValues,
 } from "@/lib/project-form";
 import { dateInputValueToTimestamp } from "@/lib/dates";
+import { projectDetailDefaultSearch } from "@/lib/router-search-defaults";
 import type { Doc, Id } from "@cvx/_generated/dataModel";
 
 type Props = {
@@ -54,7 +55,7 @@ export function ProjectFormModal({
       navigate({
         to: "/projects/$projectId",
         params: { projectId: String(id) },
-        search: { tab: "overview", taskView: "list" },
+        search: { ...projectDetailDefaultSearch },
       });
     } finally {
       setBusy(false);

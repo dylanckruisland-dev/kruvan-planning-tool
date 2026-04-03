@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@cvx/_generated/api";
 import type { Id } from "@cvx/_generated/dataModel";
+import { MentionTextField } from "@/components/mentions/MentionTextField";
 
 const inputClass =
   "mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none input-focus-accent";
@@ -145,10 +146,12 @@ export function GenerateContentIdeasModal({
             >
               Business / industry
             </label>
-            <input
+            <MentionTextField
               id="gen-business"
               value={businessType}
-              onChange={(e) => setBusinessType(e.target.value)}
+              onValueChange={setBusinessType}
+              workspaceId={workspaceId}
+              mentionEnabled={open}
               className={inputClass}
               placeholder="e.g. Beach bar, B2B SaaS, fitness studio"
               maxLength={800}
@@ -162,10 +165,12 @@ export function GenerateContentIdeasModal({
             >
               Type of content
             </label>
-            <input
+            <MentionTextField
               id="gen-focus"
               value={contentFocus}
-              onChange={(e) => setContentFocus(e.target.value)}
+              onValueChange={setContentFocus}
+              workspaceId={workspaceId}
+              mentionEnabled={open}
               className={inputClass}
               placeholder="e.g. Short-form video, carousels, newsletter snippets"
               maxLength={800}
@@ -179,10 +184,13 @@ export function GenerateContentIdeasModal({
             >
               Background (optional)
             </label>
-            <textarea
+            <MentionTextField
+              multiline
               id="gen-bg"
               value={background}
-              onChange={(e) => setBackground(e.target.value)}
+              onValueChange={setBackground}
+              workspaceId={workspaceId}
+              mentionEnabled={open}
               rows={4}
               maxLength={800}
               placeholder="Audience, tone of voice, goals, constraints…"

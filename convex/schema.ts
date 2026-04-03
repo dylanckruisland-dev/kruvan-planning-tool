@@ -46,6 +46,7 @@ export default defineSchema({
         v.literal("/content"),
         v.literal("/projects"),
         v.literal("/settings"),
+        v.literal("/messages"),
       ),
     ),
     timezone: v.optional(v.string()),
@@ -53,6 +54,9 @@ export default defineSchema({
     weekStartsOn: v.optional(
       v.union(v.literal("sunday"), v.literal("monday")),
     ),
+    /** Denormalized from last workspace-wide team message (Messages → Team). */
+    teamChatLastAt: v.optional(v.number()),
+    teamChatPreview: v.optional(v.string()),
   })
     .index("by_slug", ["slug"])
     .index("by_owner", ["ownerId"]),
@@ -79,6 +83,69 @@ export default defineSchema({
     name: v.string(),
     email: v.optional(v.string()),
   }).index("by_workspace", ["workspaceId"]),
+
+  /**
+   * Auth-backed workspace collaborators (invite / accept flow).
+   * Workspace owner is `workspaces.ownerId` — not duplicated here.
+   */
+  workspaceUserMemberships: defineTable({
+    workspaceId: v.id("workspaces"),
+    userId: v.id("users"),
+    role: v.union(v.literal("admin"), v.literal("member")),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_workspace_user", ["workspaceId", "userId"])
+    .index("by_user", ["userId"]),
+
+  workspaceInvites: defineTable({
+    workspaceId: v.id("workspaces"),
+    /** Normalized lowercase email of an existing Kruvan account. */
+    email: v.string(),
+    invitedByUserId: v.id("users"),
+    role: v.union(v.literal("admin"), v.literal("member")),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("accepted"),
+      v.literal("declined"),
+      v.literal("cancelled"),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_email_status", ["email", "status"]),
+
+  workspaceMessages: defineTable({
+    workspaceId: v.id("workspaces"),
+    senderId: v.id("users"),
+    body: v.string(),
+    createdAt: v.number(),
+    mentionedUserIds: v.optional(v.array(v.id("users"))),
+  })
+    .index("by_workspace_created", ["workspaceId", "createdAt"]),
+
+  /** Direct message thread (1:1). */
+  conversations: defineTable({
+    kind: v.literal("dm"),
+    /** Deterministic key so two users always map to one row: `id1|id2` lexicographic. */
+    dmPairKey: v.string(),
+    createdAt: v.number(),
+    lastMessageAt: v.number(),
+    lastMessageBody: v.optional(v.string()),
+  }).index("by_dm_pair", ["dmPairKey"]),
+
+  conversationParticipants: defineTable({
+    conversationId: v.id("conversations"),
+    userId: v.id("users"),
+  })
+    .index("by_conversation", ["conversationId"])
+    .index("by_user", ["userId"]),
+
+  directMessages: defineTable({
+    conversationId: v.id("conversations"),
+    senderId: v.id("users"),
+    body: v.string(),
+    createdAt: v.number(),
+  }).index("by_conversation_created", ["conversationId", "createdAt"]),
 
   projects: defineTable({
     workspaceId: v.id("workspaces"),
@@ -109,6 +176,8 @@ export default defineSchema({
     assigneeId: v.optional(v.id("users")),
     assigneeMemberId: v.optional(v.id("workspaceMembers")),
     labelIds: v.array(v.id("tags")),
+    /** Order within the same workspace + project + status (0 = first). */
+    sortOrder: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     subtasks: v.optional(
       v.array(
@@ -118,6 +187,19 @@ export default defineSchema({
           done: v.boolean(),
         }),
       ),
+    ),
+    blockedByTaskId: v.optional(v.id("tasks")),
+    recurrence: v.optional(
+      v.object({
+        freq: v.union(
+          v.literal("daily"),
+          v.literal("weekly"),
+          v.literal("monthly"),
+        ),
+        interval: v.number(),
+        anchor: v.optional(v.number()),
+        until: v.optional(v.number()),
+      }),
     ),
   })
     .index("by_workspace", ["workspaceId"])
@@ -135,6 +217,68 @@ export default defineSchema({
   })
     .index("by_workspace", ["workspaceId"])
     .index("by_start", ["startTime"]),
+
+  /** Published ICS URL (e.g. Outlook) — mirrored read-only in `icsCalendarEvents`. */
+  icsCalendarSubscriptions: defineTable({
+    workspaceId: v.id("workspaces"),
+    name: v.string(),
+    icsUrl: v.string(),
+    enabled: v.boolean(),
+    createdByUserId: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    /** Last successful ICS import. */
+    lastSyncedAt: v.optional(v.number()),
+    /** Every fetch attempt (success or failure). */
+    lastAttemptAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_enabled", ["enabled"]),
+
+  icsCalendarEvents: defineTable({
+    workspaceId: v.id("workspaces"),
+    subscriptionId: v.id("icsCalendarSubscriptions"),
+    instanceKey: v.string(),
+    icalUid: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    startTime: v.number(),
+    endTime: v.number(),
+    allDay: v.boolean(),
+  })
+    .index("by_workspace", ["workspaceId"])
+    .index("by_subscription", ["subscriptionId"]),
+
+  projectActivities: defineTable({
+    workspaceId: v.id("workspaces"),
+    projectId: v.id("projects"),
+    actorUserId: v.id("users"),
+    kind: v.union(
+      v.literal("task_created"),
+      v.literal("task_completed"),
+      v.literal("task_updated"),
+      v.literal("project_updated"),
+      v.literal("project_duplicated"),
+    ),
+    summary: v.string(),
+    taskId: v.optional(v.id("tasks")),
+    createdAt: v.number(),
+  }).index("by_project", ["projectId", "createdAt"]),
+
+  userInboxNotifications: defineTable({
+    userId: v.id("users"),
+    workspaceId: v.id("workspaces"),
+    kind: v.literal("team_mention"),
+    title: v.string(),
+    body: v.string(),
+    messageId: v.id("workspaceMessages"),
+    fromUserId: v.id("users"),
+    createdAt: v.number(),
+    dismissedAt: v.optional(v.number()),
+  })
+    .index("by_user_workspace", ["userId", "workspaceId"])
+    .index("by_user_created", ["userId", "createdAt"]),
 
   notes: defineTable({
     workspaceId: v.id("workspaces"),
